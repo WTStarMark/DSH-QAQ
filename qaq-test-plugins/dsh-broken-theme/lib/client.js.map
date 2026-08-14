@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": ["../src/client/index.ts", "../src/client/constants.ts"],
+  "sourcesContent": ["import type { Context } from '@deepseek-ai/cordis'\nimport { BROKEN_SERVICE } from './constants.ts'\n/** Deliberately wait on a service no row provides => fiber stays PENDING forever => red screen. */\nexport const inject = [BROKEN_SERVICE]\nexport function apply(_ctx: Context): void {\n  // Unreachable while the inject is unsatisfied.\n}\n", "export const BROKEN_SERVICE = 'neverProvidedService'\n"],
+  "mappings": ";;;;;;;;;;;;;;;;;;;;;;;;AAAA;AAAA;AAAA;AAAA;AAAA;AAAA;;;ACAO,IAAM,iBAAiB;;;ADGvB,IAAM,SAAS,CAAC,cAAc;AAC9B,SAAS,MAAM,MAAqB;AAE3C;",
+  "names": []
+}

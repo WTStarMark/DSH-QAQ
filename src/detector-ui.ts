@@ -1,0 +1,105 @@
+/**
+ * L3 UI-failure detector: drive a headless Chrome and read the real DOM.
+ * Detection is TEXT-based (see plan §0.4): the red-screen structural class
+ * names are CSS-Module hashed and unstable, but the fixed text
+ * "Failed to load plugins" is pinned in AppRoot.tsx.
+ */
+import type { CdpSession } from './cdp.ts'
+import { launchSession } from './cdp.ts'
+
+/** The exact pinned failure marker rendered by the web boot (AppRoot.tsx). */
+export const FAILED_MARKER = 'Failed to load plugins'
+
+export interface DomSnapshot {
+  bodyText: string
+  /** Whether a real composer textarea is present (hallmark of settled healthy UI). */
+  hasComposer: boolean
+  /** Whether the boot page (spinner) is still present. */
+  isBootPage: boolean
+}
+
+export interface UiVerdict {
+  ok: boolean
+  kind: 'loading' | 'failed' | 'ok' | 'error'
+  bodyText: string
+  failureDetail?: string
+  failedEntries?: string[]
+}
+
+const DOM_PROBE =`
+(() => {
+  const bodyText = document.body ? (document.body.innerText || '') : '';
+  const root = document.getElementById('root');
+  let hasComposer = false;
+  let isBootPage = false;
+  if (root) {
+    hasComposer = !!root.querySelector('textarea');
+    // The boot card carries the HARNESS wordmark and has no composer.
+    isBootPage = bodyText.includes('HARNESS') && !hasComposer;
+  }
+  return { bodyText: bodyText.slice(0, 600), hasComposer, isBootPage };
+})()`
+
+export function classifyDom(snap: DomSnapshot): UiVerdict {
+  const hasFailed = snap.bodyText.includes(FAILED_MARKER)
+  if (hasFailed) {
+    const detail = extractFailureDetail(snap.bodyText)
+    return { ok: false, kind: 'failed', bodyText: snap.bodyText, failureDetail: detail, failedEntries: parseFailedEntries(detail) }
+  }
+  if (snap.hasComposer) {
+    return { ok: true, kind: 'ok', bodyText: snap.bodyText }
+  }
+  if (snap.isBootPage) {
+    return { ok: false, kind: 'loading', bodyText: snap.bodyText }
+  }
+  // None of the markers present yet (page still loading assets).
+  return { ok: false, kind: 'loading', bodyText: snap.bodyText }
+}
+
+export function extractFailureDetail(bodyText: string): string | undefined {
+  const m = bodyText.match(/web boot:.{0,400}/s)
+  return m ? m[0].trim() : undefined
+}
+
+export function parseFailedEntries(detail: string | undefined): string[] {
+  const names: string[] = []
+  if (!detail) return names
+  // Format A (single-entry inline): "web boot: 1 entry did not activate dsh-x: pending (waiting for service: y)"
+  const inline = /did not activate\s+([\w@/.-]+)/g
+  let mm = inline.exec(detail)
+  while (mm) { names.push(mm[1]); mm = inline.exec(detail) }
+  // Format B (sweeper per-line body): "<id>: pending|failed|import failed ..."
+  const linesA = detail.split(/\r?\n/).map(l => l.trim())
+  for (const line of linesA) {
+    if (/web boot:/i.test(line)) continue
+    const m = line.match(/^([\w@/.-]+)\s*:\s*(pending|failed|import failed)/)
+    if (m) names.push(m[1])
+  }
+  return Array.from(new Set(names))
+}
+export async function probeOnce(session: CdpSession): Promise<UiVerdict> {
+  const v = await session.evaluate(DOM_PROBE)
+  const snap = (v ?? { bodyText: '', hasComposer: false, isBootPage: false }) as DomSnapshot
+  return classifyDom(snap)
+}
+
+export async function pollUi(session: CdpSession, url: string, timeoutMs: number): Promise<UiVerdict> {
+  await session.evaluate(`window.location.href = ${JSON.stringify(url)}`)
+  const start = Date.now()
+  let last: UiVerdict | null = null
+  while (Date.now() - start < timeoutMs) {
+    last = await probeOnce(session)
+    if (last.kind === 'failed' || last.kind === 'ok') return last
+    await sleep(500)
+  }
+  return last ?? { ok: false, kind: 'error', bodyText: '' }
+}
+
+export async function detectUi(url: string, timeoutMs = 25000, port = 0): Promise<UiVerdict> {
+  const debugPort = port > 0 ? port : (9000 + Math.floor(Math.random() * 900))
+  const session = await launchSession({ debugPort })
+  try { return await pollUi(session, url, timeoutMs) }
+  finally { await session.close() }
+}
+
+function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)) }

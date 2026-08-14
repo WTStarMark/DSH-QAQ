@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+*.txt
+qaq-test-home/
+qaq-clean-home/
+qaq-loop-home/
+qaq-rollback-test-home/
+qaq-chrome-profile/
+qaq-test-plugins/dsh-broken-theme/node_modules/
+tmp-debug.mjs
+deepseek-harness/
