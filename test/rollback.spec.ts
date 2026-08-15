@@ -10,9 +10,14 @@ import { qaqDir, profileDir } from '../src/paths.ts'
 import { Logger } from '../src/log.ts'
 
 let home = ''
-beforeAll(() => { home = mkdtempSync(join(tmpdir(), 'qaq-rollback-')) })
+let log: Logger
+beforeAll(() => {
+  home = mkdtempSync(join(tmpdir(), 'qaq-rollback-'))
+  // Create the logger AFTER home is set: a module-level Logger with home=''
+  // used to resolve .qaq relative to the cwd and pollute the repo root.
+  log = new Logger(home)
+})
 afterAll(() => { rmSync(home, { recursive: true, force: true }) })
-const log = new Logger(home)
 
 function setupProfile(name = 'web', pkgJson = '{"name":"p"}', patch = '[]'): void {
   const pr = profileDir(home, name)

@@ -16,7 +16,7 @@
  */
 import { appendFileSync, mkdirSync, writeFileSync, renameSync, statSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { qaqDir } from './paths.ts'
+import { qaqDir, resolveDshHome } from './paths.ts'
 
 export type LogLevel = 'info' | 'warn' | 'error'
 
@@ -86,9 +86,12 @@ export class Logger {
   private dir: string | null = null
   private home: string
   constructor(home: string, private tag = 'qaq', private cat = 'qaq', private phase?: string) {
-    this.home = home
+    // An empty/whitespace home would resolve .qaq relative to the cwd and
+    // pollute the caller's directory with log files; fall back to the real DSH
+    // home so logs always land under a home's .qaq/log.
+    this.home = home && home.trim().length > 0 ? home : resolveDshHome()
     try {
-      const dir = join(qaqDir(home), 'log')
+      const dir = join(qaqDir(this.home), 'log')
       mkdirSync(dir, { recursive: true })
       this.dir = dir
     } catch { this.dir = null }

@@ -1,9 +1,16 @@
 
+# Rollback integration test: seed good -> break profile -> 3 guarded runs ->
+# verify rollback + restore. Location-independent: all paths derive from this
+# script's own directory; the DSH checkout comes from $env:QAQ_SMOKE_DSH_HOME
+# (falling back to a sibling 'deepseek-harness' next to this repo).
 $ErrorActionPreference = 'Continue'
-$H = 'D:\Mochen\Project\QAQ\qaq-rollback-test-home'
-$CLONE = 'D:\Mochen\Project\QAQ\deepseek-harness'
-$CLI = 'D:\Mochen\Project\QAQ\src\cli.ts'
-$LOG = 'D:\Mochen\Project\QAQ\rollback-test.log'
+$ROOT = Split-Path $PSScriptRoot -Parent
+$H = Join-Path $ROOT 'qaq-rollback-test-home'
+$CLONE = if ($env:QAQ_SMOKE_DSH_HOME) { $env:QAQ_SMOKE_DSH_HOME } else { Join-Path (Split-Path $ROOT -Parent) 'deepseek-harness' }
+$CLI = Join-Path $ROOT 'src\cli.ts'
+$LOG = Join-Path $ROOT 'rollback-test.log'
+$BROKEN = Join-Path $ROOT 'qaq-test-plugins\dsh-broken-theme'
+$BROKEN_FWD = ($BROKEN -replace '\\', '/')
 
 function Write-NoBom($path, $content) {
   [System.IO.File]::WriteAllText($path, $content, (New-Object System.Text.UTF8Encoding($false)))
@@ -28,19 +35,19 @@ Remove-Item Env:\DSH_HOME, Env:\QAQ_DSH_CMD -ErrorAction SilentlyContinue
 Write-Output "SEEDED-GOOD"
 
 # Now break the profile (add broken theme) WITHOUT BOM
-$brokenPkg = @'
+$brokenPkg = @"
 {
   "name": "dsh-profile-web",
   "private": true,
-  "dependencies": { "dsh-broken-theme": "link:D:/Mochen/Project/QAQ/qaq-test-plugins/dsh-broken-theme" },
+  "dependencies": { "dsh-broken-theme": "link:$BROKEN_FWD" },
   "dsh": { "profile": { "bundles": [ "@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-broken-theme" ] } }
 }
-'@
+"@
 Write-NoBom (Join-Path $H 'profiles\web\package.json') $brokenPkg
 $nm = Join-Path $H 'profiles\web\node_modules'
 New-Item -ItemType Directory -Force -Path $nm | Out-Null
 $jn = Join-Path $nm 'dsh-broken-theme'
-if (!(Test-Path $jn)) { New-Item -ItemType Junction -Path $jn -Target 'D:\Mochen\Project\QAQ\qaq-test-plugins\dsh-broken-theme' | Out-Null }
+if (!(Test-Path $jn)) { New-Item -ItemType Junction -Path $jn -Target $BROKEN | Out-Null }
 Write-Output "PROFILE-BROKEN"
 
 function Run-Guard($label) {

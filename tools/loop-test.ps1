@@ -1,9 +1,15 @@
 
+# Loop integration test: healthy boot -> snapshot -> break -> 3 guarded runs ->
+# verify rollback. Location-independent: paths derive from $PSScriptRoot; the
+# DSH checkout comes from $env:QAQ_SMOKE_DSH_HOME (or a sibling 'deepseek-harness').
 $ErrorActionPreference = 'Continue'
-$HOME_DIR = 'D:\Mochen\Project\QAQ\qaq-loop-home'
-$CLONE = 'D:\Mochen\Project\QAQ\deepseek-harness'
-$CLI = 'D:\Mochen\Project\QAQ\src\cli.ts'
-$OUTLOG = 'D:\Mochen\Project\QAQ\loop-test.log'
+$ROOT = Split-Path $PSScriptRoot -Parent
+$HOME_DIR = Join-Path $ROOT 'qaq-loop-home'
+$CLONE = if ($env:QAQ_SMOKE_DSH_HOME) { $env:QAQ_SMOKE_DSH_HOME } else { Join-Path (Split-Path $ROOT -Parent) 'deepseek-harness' }
+$CLI = Join-Path $ROOT 'src\cli.ts'
+$OUTLOG = Join-Path $ROOT 'loop-test.log'
+$BROKEN = Join-Path $ROOT 'qaq-test-plugins\dsh-broken-theme'
+$BROKEN_FWD = ($BROKEN -replace '\\', '/')
 
 function Run-Guard($label) {
   Write-Output "===== $label ====="
@@ -27,19 +33,19 @@ function Write-NoBom($path, $content) {
 
 # Phase 2: break the profile (add broken theme)
 $pkg = Join-Path $HOME_DIR 'profiles\web\package.json'
-$broken = @'
+$broken = @"
 {
   "name": "dsh-profile-web-loop",
   "private": true,
-  "dependencies": { "dsh-broken-theme": "link:D:/Mochen/Project/QAQ/qaq-test-plugins/dsh-broken-theme" },
+  "dependencies": { "dsh-broken-theme": "link:$BROKEN_FWD" },
   "dsh": { "profile": { "bundles": [ "@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-broken-theme" ] } }
 }
-'@
+"@
 Write-NoBom $pkg $broken
 $nm = Join-Path $HOME_DIR 'profiles\web\node_modules'
 New-Item -ItemType Directory -Force -Path $nm | Out-Null
 $j = Join-Path $nm 'dsh-broken-theme'
-if (!(Test-Path $j)) { New-Item -ItemType Junction -Path $j -Target 'D:\Mochen\Project\QAQ\qaq-test-plugins\dsh-broken-theme' | Out-Null }
+if (!(Test-Path $j)) { New-Item -ItemType Junction -Path $j -Target $BROKEN | Out-Null }
 Write-Output "PROFILE-BROKEN"
 
 # Phase 3: run guard 3x against broken -> expect rollback on 3rd
