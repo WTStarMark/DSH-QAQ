@@ -195,6 +195,20 @@ Integration fixture: `qaq-test-plugins/dsh-broken-theme` (injects a service that
 | `bin/` | `qaq` / `qaq-web.cmd` / `qaq-install.cmd` launchers |
 | `tools/` · `test/` | integration/smoke scripts; vitest specs |
 
+## Documentation
+
+Developer-oriented deep-dives for secondary development:
+
+| Document | Covers |
+|----------|--------|
+| [architecture.md](docs/architecture.md) | module map, boot sequence, state machine, data flow |
+| [guard-lifecycle.md](docs/guard-lifecycle.md) | supervised boot flow, failure classification, transient retry, confirmation window |
+| [state-and-rollback.md](docs/state-and-rollback.md) | state.json, snapshots, anti-loop fence, guard lock |
+| [ui-detection.md](docs/ui-detection.md) | headless-Chrome CDP client, L3 text criteria, probe timing |
+| [console-and-env.md](docs/console-and-env.md) | 懒人脚本 console, environment auto-discovery, plugin mounting |
+| [logging.md](docs/logging.md) | structured log format, four channels, rotation |
+| [testing.md](docs/testing.md) | unit-test matrix, smoke, real-DSH integration, fault injection |
+
 ## License
 
 MIT

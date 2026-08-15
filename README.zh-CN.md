@@ -195,6 +195,20 @@ pnpm smoke     # 一键回归：单测 + 隔离 home 种子/破坏/守卫检测
 | `bin/` | `qaq` / `qaq-web.cmd` / `qaq-install.cmd` 启动入口 |
 | `tools/` · `test/` | 集成/smoke 脚本；vitest 测试 |
 
+## 文档
+
+面向二次开发的专项解析文档：
+
+| 文档 | 内容 |
+|------|------|
+| [architecture.md](docs/architecture.md) | 架构总览：模块地图、启动时序、状态机、数据流 |
+| [guard-lifecycle.md](docs/guard-lifecycle.md) | 守卫生命周期：失败分类、瞬态重试、确认窗口 |
+| [state-and-rollback.md](docs/state-and-rollback.md) | 状态存储与回滚：state.json、快照、防循环、守卫锁 |
+| [ui-detection.md](docs/ui-detection.md) | UI 检测与 CDP：无依赖客户端、L3 判据、探测时序 |
+| [console-and-env.md](docs/console-and-env.md) | 懒人脚本控制台与环境自动发现、插件挂载 |
+| [logging.md](docs/logging.md) | 日志系统：结构化格式、四通道、轮转 |
+| [testing.md](docs/testing.md) | 测试与真实集成：单测矩阵、smoke、故障注入 |
+
 ## License
 
 MIT
