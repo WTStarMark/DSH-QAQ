@@ -1,14 +1,14 @@
-# 日志系统（src/log.ts）
+# Logging System (src/log.ts)
 
-本文件解析结构化日志：记录格式、四通道分文件、按大小轮转，以及开发者在故障检修时的使用方式。
+This document dissects the structured logger: the record format, the four file channels, size-based rotation, and how developers use it during troubleshooting.
 
-相关文档：[架构总览](architecture.md)
+Related: [Architecture Overview](architecture.md)
 
 ---
 
-## 1. 记录格式
+## 1. Record format
 
-每条记录一行 JSON：
+One JSON line per record:
 
 ```jsonc
 { "ts": "2026-08-15T02:18:12.645Z", "level": "info", "cat": "qaq",
@@ -16,78 +16,76 @@
   "profile": "web", ...meta }
 ```
 
-- `ts`：ISO-8601 UTC；`level`：info / warn / error；
-- `cat`：日志类别（qaq / rollback / ...）；`phase`：可选阶段（boot / confirm / rollback / restart）；
-- 自定义 meta 键值（profile、kind、action、snapDir 等）由调用方附加，`undefined` 值被剔除。
-- 单行 JSON 便于 `Select-String` / `jq` 等机器解析。
+- `ts`: ISO-8601 UTC; `level`: info / warn / error;
+- `cat`: log category (qaq / rollback / ...); `phase`: optional stage (boot / confirm / rollback / restart);
+- extra meta key-values (profile, kind, action, snapDir, ...) are attached by the caller; `undefined` values are dropped.
+- Single-line JSON is easy to machine-parse with `Select-String` / `jq`.
 
 ---
 
-## 2. 四通道文件（`$DSH_HOME/.qaq/log/`）
+## 2. The four file channels (`$DSH_HOME/.qaq/log/`)
 
-| 文件 | 内容 | 用途 |
-|------|------|------|
-| `qaq.log` | 全部（info + warn + error） | 主记录 |
-| `error.log` | 仅 warn / error | 快速 grep 问题 |
-| `access.log` | 崩溃审计轨迹 | 启动结论、快照、回滚、重置、插件挂载、手动还原——**状态变更的唯一完整轨迹** |
-| `host.log` | 被监督 dsh 的原始 stdout/stderr | 排查 dsh 自身输出；格式为 `level ts 行内容` |
+| File | Content | Use |
+|------|---------|-----|
+| `qaq.log` | everything (info + warn + error) | canonical record |
+| `error.log` | warn/error only | fast problem grep |
+| `access.log` | crash-audit trail | boot verdicts, snapshots, rollbacks, resets, plugin mounts, manual restores — the only complete trail of state changes |
+| `host.log` | raw supervised dsh stdout/stderr | inspecting dsh's own output; line format `level ts content` |
 
-写入策略：
-- `info/warn/error`：写 `qaq.log`；warn/error 同时写 `error.log`；`access()` 额外写 `access.log` 并镜像到 stdout。
-- `host()`：子进程输出按行前缀时间戳写 `host.log`，并镜像到可见窗口（error 走 stderr，其余走 stdout）。
-
----
-
-## 3. 轮转（按大小）
-
-- 阈值 `ROTATE_BYTES = 256 KB`；保留 `KEEP_FILES = 5` 份。
-- 触发：`qaq.log → qaq.1.log → qaq.2.log …`，超出 5 份删除最旧的。
-- 实现：`sizes`/`lastCheck` 做增量字节跟踪（约每 64KB 才 stat 一次），`rotateFile` 用
-  `renameSync` 递推 + 正则清理超龄副本。
-- **轮转是尽力而为的**：任何异常都被吞掉，绝不影响业务。
+Write policy:
+- `info/warn/error`: writes `qaq.log`; warn/error also write `error.log`; `access()` additionally writes `access.log` and mirrors to stdout.
+- `host()`: child output is timestamped per line into `host.log` and mirrored to the visible window (error → stderr, rest → stdout).
 
 ---
 
-## 4. 日志入口约定
+## 3. Rotation (size-based)
+
+- Threshold `ROTATE_BYTES = 256 KB`; keeps `KEEP_FILES = 5` copies.
+- Sequence: `qaq.log → qaq.1.log → qaq.2.log …`; copies beyond 5 are deleted.
+- Implementation: `sizes`/`lastCheck` do incremental byte tracking (stat roughly every 64 KB); `rotateFile` shifts with `renameSync` and prunes with a regex over the directory.
+- **Rotation is best-effort**: any exception is swallowed and never affects the business.
+
+---
+
+## 4. Logger entry conventions
 
 ```ts
-const log = new Logger(home)          // home 为空/空白时回退 resolveDshHome()
+const log = new Logger(home)          // empty/whitespace home falls back to resolveDshHome()
 log.info('...') / log.warn('...') / log.error('...', meta)
-log.access('状态变更', { profile, action })   // 审计轨迹
-log.host(chunk, 'stdout' | 'stderr')          // 子进程原始输出
-log.in('rollback') / log.at('rollback')       // 派生类别/阶段日志
+log.access('state change', { profile, action })   // audit trail
+log.host(chunk, 'stdout' | 'stderr')          // raw child output
+log.in('rollback') / log.at('rollback')       // derived category/stage loggers
 ```
 
-> **空 home 回退**是硬性防线：`new Logger('')` 会把 `.qaq` 解析到 cwd 相对路径污染工作目录
-> （`rollback.spec.ts` 曾因模块顶层构造触发，已修复并加注释）。
+> **Empty-home fallback** is a hard guard: `new Logger('')` would resolve `.qaq` relative to the cwd and pollute the working directory (`rollback.spec.ts` used to trigger this via a module-level constructor; fixed and commented).
 
 ---
 
-## 5. 检修指引
+## 5. Troubleshooting guide
 
-| 场景 | 看哪 |
-|------|------|
-| 启动结论 / 是否回滚 | `access.log` |
-| 报错与告警 | `error.log` |
-| dsh 自身行为 / 红屏前的输出 | `host.log` |
-| 完整时间线 | `qaq.log`（含 phase 字段） |
-| 控制台内查看 | `qaq console` → [7] |
+| Scenario | Where to look |
+|----------|---------------|
+| Boot verdict / whether a rollback happened | `access.log` |
+| Errors and warnings | `error.log` |
+| dsh's own behavior / output before a red screen | `host.log` |
+| Full timeline | `qaq.log` (with the `phase` field) |
+| Inside the console | `qaq console` → [7] |
 
-示例排查（PowerShell）：
+Example (PowerShell):
 
 ```powershell
-# 最近的回滚
+# recent rollbacks
 Select-String -Path "$HOME\.dsh\.qaq\log\access.log" -Pattern 'rolled back' | Select-Object -Last 5
 
-# 某次启动的完整轨迹（按 phase 过滤）
+# the full trail of one boot (filter by phase)
 Get-Content "$HOME\.dsh\.qaq\log\qaq.log" | ConvertFrom-Json | Where-Object { $_.phase -eq 'boot' }
 ```
 
 ---
 
-## 6. 修改指南
+## 6. Modification guide
 
-- 加通道 → 扩展 `LogChannel` 与 `filePathFor`，同步 `access.log` 表（本文件第 2 节）。
-- 改轮转阈值 → 只动 `ROTATE_BYTES` / `KEEP_FILES` 常量。
-- 加字段 → `LogRecord` 的索引签名已允许任意 meta；调用方直接传即可。
-- 测试：`test/log.spec.ts` 覆盖结构化格式、error 双写、access 通道、`.in()` 类别、轮转。
+- New channel → extend `LogChannel` and `filePathFor`, and update the channel table above.
+- Rotation tuning → touch only the `ROTATE_BYTES` / `KEEP_FILES` constants.
+- New fields → the `LogRecord` index signature already accepts arbitrary meta; callers just pass them.
+- Tests: `test/log.spec.ts` covers the structured format, error double-write, the access channel, `.in()` categories, and rotation.

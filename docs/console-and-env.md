@@ -1,124 +1,114 @@
-# 懒人脚本控制台与环境发现（console.ts / env.ts / install-plugin.ts / bin/）
+# Lazy Launcher Console & Environment Discovery (console.ts / env.ts / install-plugin.ts / bin/)
 
-本文件解析面向用户的懒人脚本层：环境自动发现与启动前自检、交互式 CMD 菜单、备份插件自动挂载，以及 `.cmd` 启动器的实现注意点。
+This document dissects the user-facing lazy launcher layer: environment auto-discovery and the pre-launch self-check, the interactive CMD menu, automatic backup-plugin mounting, and the implementation notes for the `.cmd` launchers.
 
-相关文档：[架构总览](architecture.md) · [守卫生命周期](guard-lifecycle.md)
+Related: [Architecture Overview](architecture.md) · [Guard Lifecycle](guard-lifecycle.md)
 
 ---
 
-## 1. 环境自动发现（src/env.ts）
+## 1. Environment auto-discovery (src/env.ts)
 
-### 1.1 dsh 命令解析（`resolveCommand`）——优先级
+### 1.1 dsh command resolution (`resolveCommand`) — priority
 
 ```
-1. $QAQ_DSH_CMD                 → 直接用拆分后的命令（相对路径需配合 --cwd 落在 checkout）
-2. --cwd <dir>                  → 目录含 apps/cli → ['node','--import','tsx/esm',<cli>,'web']
-3. findAutoCheckout() 自动扫描   → 见下
-4. PATH 上的 dsh 可执行文件      → [<exe>,'web']；找不到则 source='none'（预检报错）
+1. $QAQ_DSH_CMD                 → use the split command directly (relative paths need --cwd to land in the checkout)
+2. --cwd <dir>                  → dir contains apps/cli → ['node','--import','tsx/esm',<cli>,'web']
+3. findAutoCheckout() scan      → see below
+4. a dsh executable on PATH     → [<exe>,'web']; if absent, source='none' (preflight error)
 ```
 
-### 1.2 `findAutoCheckout` 扫描范围
+### 1.2 `findAutoCheckout` scan scope
 
-1. **祖先链**：从 `process.cwd()` 向上最多 5 级，检查 `apps/cli/src/bin.ts` / `index.ts` / `dist/index.js`。
-2. **兄弟目录**（懒人脚本场景关键）：扫描 cwd 父目录下的**所有直接子目录**，任一含 `apps/cli` 即命中——
-   覆盖"QAQ 与 deepseek-harness 并排"的典型布局（双击 `qaq-web.cmd` 后 cwd 在 QAQ，checkout 在兄弟目录）。
+1. **Ancestor chain**: walk up to 5 levels from `process.cwd()`, checking `apps/cli/src/bin.ts` / `index.ts` / `dist/index.js`.
+2. **Sibling scan** (key for the lazy launcher): scan **every direct child** of the cwd's parent directory; any child containing `apps/cli` wins — this covers the typical layout where QAQ and `deepseek-harness` sit side by side (after double-clicking `qaq-web.cmd` the cwd is QAQ, the checkout is the sibling).
 
-> PATH 分隔符按平台选择：Windows `;`，POSIX `:`（驱动器盘符 `C:\` 不能用 `/[;:]/` 一刀切）。
+> PATH separator is chosen per platform: `;` on Windows, `:` on POSIX (drive letters like `C:\` make a blanket `/[;:]/` split unsafe).
 
-### 1.3 `preflight` 启动前自检
+### 1.3 `preflight` self-check
 
-| 检查 | 级别 | 失败提示（中文） |
-|------|------|------------------|
-| dsh 命令存在（source != 'none'） | error | 找不到 dsh / 未发现源码目录 → 装 dsh / --cwd / QAQ_DSH_CMD |
-| Chrome/Chromium/Edge 存在 | error | 装 Chrome 或 Edge（UI 检测必需） |
-| 端口空闲（`isPortFree`，2.5s 超时） | error | 端口被占 → 先停旧进程或 --port 换端口 |
-| checkout 不完整（有 checkout 但无 CLI 入口） | warn | 提示依赖/结构可能不完整 |
+| Check | Level | Failure hint (Chinese UI) |
+|-------|-------|---------------------------|
+| dsh command exists (source != 'none') | error | dsh not found / no source dir → install dsh / --cwd / QAQ_DSH_CMD |
+| Chrome/Chromium/Edge exists | error | install Chrome or Edge (required for UI detection) |
+| port free (`isPortFree`, 2.5s timeout) | error | port busy → stop the old process or --port |
+| incomplete checkout (has checkout but no CLI entry) | warn | deps/structure may be incomplete |
 
-`preflight` 返回 `EnvReport`（command/cwd/home/browser/port/problems），`cli.ts` 只对 `error` 级 fatal。
+`preflight` returns an `EnvReport` (command/cwd/home/browser/port/problems); `cli.ts` treats only `error`-level problems as fatal.
 
 ---
 
-## 2. 交互式控制台（src/console.ts）
+## 2. Interactive console (src/console.ts)
 
-### 2.1 菜单
+### 2.1 Menu
 
 ```
-[1] 一键启动守卫（接管 dsh web）    [5] 重置失败计数
-[2] 查看状态                        [6] 自动挂载 dsh-qaq 备份插件
-[3] 手动备份当前配置为 last-good    [7] 查看日志（error / access / host）
-[4] 手动回滚到 last-good            [q] 退出
+[1] Start the guard (take over dsh web)   [5] Reset failure counters
+[2] View status                           [6] Mount the dsh-qaq backup plugin
+[3] Back up current config as last-good   [7] View logs (error / access / host)
+[4] Roll back to last-good                [q] Quit
 ```
 
-### 2.2 输入机制：行队列 asker（`createAsker`）
+### 2.2 Input mechanism: the line-queue asker (`createAsker`)
 
-> 为什么不用 `readline.question`：管道/重定向输入会在 `preflight`（~2.5s）期间送达并关闭，
-> `question()` 注册监听太晚 → 输入丢失、进程因 pending Promise 不持事件循环而静默退出。
+> Why not `readline.question`: piped/redirected input arrives and closes during `preflight` (~2.5s); `question()` registers its listener too late → input is lost and the process exits silently (a pending promise does not hold the event loop).
 
-- 创建接口时立即监听 `line` 事件，把输入**先入队**；prompt 时消费队列。
-- EOF（stdin 关闭）→ 解析当前等待者为 `q`，无等待者则入队 `q`——重定向运行也走干净退出路径。
+- The interface listens for `line` immediately at creation and **queues** every line; a prompt consumes the queue.
+- EOF (stdin closed) → resolves an in-flight prompt as `q`, or enqueues `q` if no waiter — redirected runs still exit cleanly.
 
-### 2.3 界面管理
+### 2.3 Screen management
 
-- 每次渲染菜单前 `clearScreen()`（仅 TTY 的 ANSI `\x1b[2J\x1b[3J\x1b[H`）——窗口永远只留一屏。
-- 持久头部：标题框 + 启动摘要 + 问题警告，每屏重打。
-- 结果提示行：快速操作（备份/回滚/重置/挂载）结果以 `✔ <lastNotice>` 保留在菜单上方，不闪没。
-- 详情视图（状态/日志）输出后 `[回车返回菜单]` 暂停。
+- `clearScreen()` before every menu render (TTY-only ANSI `\x1b[2J\x1b[3J\x1b[H`) — the window always shows one screen.
+- Persistent header: title box + launch summary + problem warnings, re-printed each screen.
+- Result line: quick actions (backup / rollback / reset / mount) keep a `✔ <lastNotice>` above the menu instead of flashing past.
+- Detail views (status / logs) pause with an Enter-to-return prompt.
 
-### 2.4 守卫锁生命周期（关键）
+### 2.4 Guard-lock lifetime (critical)
 
-- 受监督子进程健康后，锁**持续持有到子进程退出**（`watchSupervisor` 在 exit 时释放），期间：
-  - 菜单顶部显示"🛡 守卫监控中"；再次选 [1] 被拒绝（提示先等退出）。
-  - 每次启动都重新 `preflight`（全新自检），不会用过期的端口检查。
-- Ctrl+C（SIGINT）：先杀受监督子进程再退出——不留进程占端口。
-- 关闭窗口：Windows 向同控制台广播 `CTRL_CLOSE_EVENT`，守卫与子进程一起终止；
-  残留锁由 PID 存活检查自动回收。
+- Once the supervised child is healthy, the lock is **held until the child exits** (`watchSupervisor` releases on exit). While held:
+  - the menu shows "🛡 supervising" and a second [1] is refused (wait for it to exit).
+  - every launch re-runs `preflight` (fresh); a stale port check can never misfire.
+- Ctrl+C (SIGINT): kills the supervised child first, then exits — no leftover process holding the port.
+- Closing the window: Windows broadcasts `CTRL_CLOSE_EVENT` to every console-attached process; the guard and the child terminate together; the leftover lock is reclaimed by the PID liveness check.
 
 ---
 
-## 3. 备份插件自动挂载（src/install-plugin.ts）
+## 3. Backup-plugin mounting (src/install-plugin.ts)
 
-### 3.1 为什么只动 bundle 列表，不动 user patch
+### 3.1 Why only the bundle list, never the user patch
 
-DSH 从 `dsh.profile.bundles` 按序解析每个 bundle，读取其 package.json 的 `dsh.bundle.patch`
-作为**插件层**自动加载。所以挂载 = 两步：
+DSH resolves each `dsh.profile.bundles` entry in order, reads its `dsh.bundle.patch` from package.json, and loads it as a **plugin layer**. So mounting is exactly two steps:
 
-1. 把 `dsh-qaq` 加入 `dsh.profile.bundles`；
-2. 在 `profiles/<name>/node_modules` 建 junction 指向 `packages/dsh-qaq`。
+1. add `dsh-qaq` to `dsh.profile.bundles`;
+2. create a junction at `profiles/<name>/node_modules/dsh-qaq` → `packages/dsh-qaq`.
 
-**绝不修改 `cordis.patch.yml`（user layer）**：再插一行 `id: dsh-qaq` 会与插件层重复 → `duplicate
-loader entry id` 启动崩溃（真实集成抓到的缺陷）。对旧版残留的 manual insert 行只告警。
+**Never touch `cordis.patch.yml` (the user layer)**: inserting another `id: dsh-qaq` row would duplicate the plugin-layer entry → `duplicate loader entry id` boot crash (a real bug caught by integration testing). A stale manual insert row from an older QAQ is only warned about.
 
-### 3.2 原子性与幂等
+### 3.2 Atomicity & idempotency
 
-- 写前保留原始 package.json；链接失败 → 撤销全部写入并报错（绝不制造启动故障）。
-- 已挂载（bundle 已在列表）→ 幂等跳过；junction 已存在 → 不重建。
+- The original package.json is kept before writing; a failed link rolls back every write and reports an error (never manufactures a boot failure).
+- Already mounted (bundle already listed) → idempotent skip; existing junction → not rebuilt.
 
-### 3.3 插件行为
+### 3.3 Plugin behavior
 
-`dsh-qaq` 在 DSH host 内部运行：`ctx.get('loader')?.await?.()` 等 loader 树稳定后，
-把 profile 配置快照到 `~/.dsh/.qaq/latest-good` + `history/<ts>/`（均带 manifest.json）。
-**失败启动不写快照**（`.catch(() => {})`）。
+`dsh-qaq` runs inside the DSH host: it awaits `ctx.get('loader')?.await?.()` for the loader tree to settle, then snapshots the profile config into `~/.dsh/.qaq/latest-good` + `history/<ts>/` (each with a manifest). **A failed boot is never snapshotted** (`.catch(() => {})`).
 
 ---
 
-## 4. `.cmd` 启动器（bin/）
+## 4. `.cmd` launchers (bin/)
 
-| 文件 | 作用 |
-|------|------|
-| `qaq-install.cmd` | 懒人一键安装：查 Node ≥22 → pnpm 装依赖（回退 npx）→ esbuild 构建 dist → 校验产物 |
-| `qaq-web.cmd` | 双击打开懒人脚本控制台：查 node_modules → `node --import tsx/esm src\cli.ts console` |
-| `qaq.cmd` | 透传命令行（`qaq <args>`） |
-| `qaq.mjs` | Node 入口：有 dist 用 dist，否则 tsx 跑源码（`import.meta.url` 相对定位） |
+| File | Purpose |
+|------|---------|
+| `qaq-install.cmd` / `qaq-install.zh.cmd` | one-click install: check Node >= 22 → pnpm deps (npx fallback) → esbuild build → verify the artifact |
+| `qaq-web.cmd` / `qaq-web.zh.cmd` | double-click opens the lazy launcher console: check node_modules → `node --import tsx/esm src\cli.ts console` |
+| `qaq.cmd` | pass-through wrapper (`qaq <args>`) |
+| `qaq.mjs` | Node entry: uses dist when present, otherwise runs the source via tsx (`import.meta.url`-relative) |
 
-**编码红线**：`.cmd` 文件必须是 **GBK(CP936) + CRLF**（中文 Windows cmd 按 ANSI 解析批处理）。
-用 UTF-8 保存会让中文 banner 乱码且乱码片段被 cmd 当命令执行。改这些文件务必用 PowerShell
-以 `Encoding.GetEncoding(936)` 读写，或用 `%~dp0` 相对定位，绝不写绝对路径。
+**Encoding red line**: `.zh.cmd` files must be **GBK(CP936) + CRLF** (zh-CN cmd parses batch files as ANSI). Saving them as UTF-8 garbles the Chinese banner and the garbage fragments get executed as commands. When editing them, read/write with `Encoding.GetEncoding(936)` via PowerShell, use `%~dp0` for relative location, and never write absolute paths. The default-named `.cmd` files are pure ASCII (no encoding risk).
 
 ---
 
-## 5. 修改指南
+## 5. Modification guide
 
-- 加菜单项 → 改 `runConsole` 的 switch 与菜单打印；结果型操作用 `lastNotice`，详情型操作后加
-  `await ask('[回车返回菜单] ')`。
-- 改发现逻辑 → 只动 `env.ts`；`test/env.spec.ts` 覆盖 QAQ_DSH_CMD / --cwd / 兄弟目录扫描。
-- 改插件挂载 → `install-plugin.ts` + `test/install-plugin.spec.ts`（幂等 + 不碰 user patch 断言）。
+- New menu item → edit the `runConsole` switch and the menu print; result-style actions use `lastNotice`, detail-style actions end with an Enter-to-return prompt.
+- Discovery changes → touch only `env.ts`; `test/env.spec.ts` covers QAQ_DSH_CMD / --cwd / the sibling scan.
+- Plugin mounting → `install-plugin.ts` + `test/install-plugin.spec.ts` (idempotency + "user patch untouched" assertions).

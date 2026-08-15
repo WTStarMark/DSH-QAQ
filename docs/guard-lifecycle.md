@@ -1,102 +1,98 @@
-# 守卫生命周期（guard.ts）
+# Guard Lifecycle (guard.ts)
 
-本文件解析 `src/guard.ts` 的编排逻辑：一次受监督 `dsh web` 启动从 spawn 到健康确认 / 失败计数的完整过程。
+This document dissects the orchestration in `src/guard.ts`: the full path of one supervised `dsh web` boot, from spawn to confirmed health / counted failure.
 
-相关文档：[架构总览](architecture.md) · [状态存储与回滚](state-and-rollback.md) · [UI 检测](ui-detection.md)
+Related: [Architecture Overview](architecture.md) · [State & Rollback](state-and-rollback.md) · [UI Detection](ui-detection.md)
 
 ---
 
-## 1. 核心类型
+## 1. Core types
 
 ```ts
 interface GuardOptions {
-  home?: string          // DSH home（默认 resolveDshHome()）
-  profile?: string       // profile 名（默认 'web'）
-  command: string[]      // dsh 启动命令，如 ['dsh','web']
-  cwd: string            // 子进程工作目录（checkout 根）
-  port?: number          // 端口（默认 3080）
+  home?: string          // DSH home (default resolveDshHome())
+  profile?: string       // profile name (default 'web')
+  command: string[]      // dsh launch command, e.g. ['dsh','web']
+  cwd: string            // child working directory (checkout root)
+  port?: number          // port (default 3080)
   dshEnv?: Record<string, string | undefined>
-  autoConfirm?: boolean  // 回滚是否免确认
-  uiTimeoutMs?: number   // UI 探测上限（默认 25000）
-  portTimeoutMs?: number // 端口就绪上限（默认 30000）
-  confirmGoodMs?: number // 稳定健康确认窗口（默认 20000）
-  retries?: number       // 瞬态失败容忍重试数（CLI 设 1）
-  threshold?: number     // 同类失败触发回滚的阈值（默认 3）
+  autoConfirm?: boolean  // skip rollback confirmation
+  uiTimeoutMs?: number   // UI probe budget (default 25000)
+  portTimeoutMs?: number // port-readiness budget (default 30000)
+  confirmGoodMs?: number // stable-healthy confirmation window (default 20000)
+  retries?: number       // transient-failure tolerance retries (CLI sets 1)
+  threshold?: number     // same-kind failures that trigger a rollback (default 3)
 }
 
 type BootVerdict =
-  | { ok: true; supervisor: DshSupervisor; url: string }          // 健康，子进程仍在运行
+  | { ok: true; supervisor: DshSupervisor; url: string }          // healthy; child still running
   | { ok: false; failureKind: 'host' | 'ui' | 'unknown';
       error?: string; rolledBack: boolean;
-      rollbackCancelled?: boolean; retriesExhausted: boolean }    // 失败
+      rollbackCancelled?: boolean; retriesExhausted: boolean }    // failed
 ```
 
 ---
 
-## 2. `bootAttempt()` — 单次尝试
+## 2. `bootAttempt()` — a single attempt
 
-一次尝试不计数、不回滚，只返回原始判定：
+One attempt returns a raw verdict without counting or rolling back:
 
 ```
 spawnDsh({ command, cwd, env: {...dshEnv, DSH_HOME}, port })
   │
-  ├─ ready 拒绝（端口超时 / spawn 失败 / 端口开启前退出）
-  │     → 等至多 1.5s 取退出码 → kill 子进程 → 返回 { kind: 'host', error: ... }
+  ├─ ready rejected (port timeout / spawn failure / exited before port opened)
+  │     → wait up to 1.5s for an exit code → kill the child → { kind: 'host', error: ... }
   │
   ├─ detectUi(url, uiTimeoutMs)
-  │     ├─ 抛异常            → kill → { kind: 'unknown', error: 'UI detector failed' }
-  │     ├─ kind === 'failed' → kill → { kind: 'ui', error: failureDetail }
-  │     ├─ kind !== 'ok' 且子进程已死 / 输出含 fail-loud 标记
-  │                         → kill → { kind: 'host', error: 'host exited during UI probe' }
-  │     └─ kind !== 'ok'     → kill → { kind: 'unknown', error: 'UI did not settle' }
+  │     ├─ throws               → kill → { kind: 'unknown', error: 'UI detector failed' }
+  │     ├─ kind === 'failed'    → kill → { kind: 'ui', error: failureDetail }
+  │     ├─ kind !== 'ok' and the child died / emitted a fail-loud marker
+  │                             → kill → { kind: 'host', error: 'host exited during UI probe' }
+  │     └─ kind !== 'ok'        → kill → { kind: 'unknown', error: 'UI did not settle' }
   │
-  └─ kind === 'ok' → 返回 { kind: 'ok', supervisor }（子进程保留，交给调用方）
+  └─ kind === 'ok' → { kind: 'ok', supervisor } (child kept, handed to the caller)
 ```
 
-### 失败分类的坑（真实集成发现的边界）
+### Classification edge cases (found through real-DSH integration)
 
-- **端口开启前崩溃**：`ready` 拒绝 → `kind: 'host'`（正确）
-- **绑定端口后才崩溃**（boot-stage 错误，如 user patch 引用了不存在的包）：`ready` 已解析，
-  但 UI 探测拿不到健康页面。此时必须检查 `supervision.child.exitCode !== null ||
-  supervision.hasHostFailureMarker()`——否则会被误判为 `unknown`（不计分、永不回滚）。
-  这是真实 DSH 联调抓到的缺陷，已有回归测试固定。
+- **Crash before the port opens**: `ready` rejects → `kind: 'host'` (correct).
+- **Crash after binding the port** (boot-stage error, e.g. the user patch references a missing package): `ready` already resolved, but the UI probe never sees a healthy page. You must check `supervision.child.exitCode !== null || supervision.hasHostFailureMarker()` here — otherwise it is misclassified as `unknown` (never counted, never rolled back). This was a real bug caught by integration testing and is pinned by a regression test.
 
 ---
 
-## 3. 瞬态重试（`isTransient`）
+## 3. Transient retry (`isTransient`)
 
 ```ts
 function isTransient(attempt): boolean {
-  if (attempt.kind === 'host') return true      // host 未就绪/早退通常可重试
-  if (attempt.kind === 'unknown') return true   // UI 未落定也可重试
-  // UI 失败里只有 bundle 加载类 flake 算瞬态
+  if (attempt.kind === 'host') return true      // host-not-ready / early exit is usually retriable
+  if (attempt.kind === 'unknown') return true   // UI not settled is retriable
+  // Only bundle-load flakes among UI failures count as transient
   return /bundle script .* failed to load/.test(e) || /import failed/.test(e)
 }
 ```
 
-- 每次重试前，上一次失败的子进程**必被杀掉**（bootAttempt 内已 kill）——失败启动绝不泄漏进程占住端口。
-- 重试计数逻辑：`for (attempt = 0; attempt <= retries; attempt++)`，`retries` 用尽或遇到非瞬态失败即退出循环。
-- `retriesExhausted` 语义：**仅当实际用尽了容忍重试次数**才为 true（真实红屏是"非瞬态"，提前退出时该值为 false）。
+- Before every retry, the previous failed child has **already been killed** inside `bootAttempt` — a failed boot never leaks a process that holds the port.
+- Loop: `for (attempt = 0; attempt <= retries; attempt++)`; breaks when retries run out or a non-transient failure occurs.
+- `retriesExhausted` semantics: **true only when the tolerance retries were actually used up** (a genuine red screen is non-transient, so an early exit leaves it false).
 
 ---
 
-## 4. 确认窗口（`confirmStable`）
+## 4. Confirmation window (`confirmStable`)
 
-健康后的"信任前验证"，防止把"刚健康就劣化"的启动记为 last-good：
+The "trust before snapshotting" gate that prevents recording a boot that turned bad right after first health:
 
-1. `sleep(confirmGoodMs)`（默认 20s）
-2. 检查 `supervisor.child.exitCode !== null` → 宿主在窗口内退出了，判 host 失败
-3. 用 `detectUi(url, min(confirmGoodMs, 15000))` 再探测一次真实 DOM：
-   - `ok` → 确认通过
-   - `failed` → 判 ui 失败
-   - 其它 / 抛异常 → 判 unknown
+1. `sleep(confirmGoodMs)` (default 20s)
+2. If `supervisor.child.exitCode !== null` → the host exited during the window → host failure
+3. Probe the real DOM once more with `detectUi(url, min(confirmGoodMs, 15000))`:
+   - `ok` → confirmed
+   - `failed` → ui failure
+   - anything else / throws → unknown
 
-> `--confirm-ms 0` 的边界：探测超时被钳制为至少 1ms，且 `pollUi` 采用 do-while **至少探测一次**，
-> 否则 0ms 会直接返回 error 把健康启动误判为失败（已修复并测试）。
+> Edge case `--confirm-ms 0`: the probe budget is clamped to at least 1ms, and `pollUi` uses a do-while that **always probes at least once** — otherwise a 0ms budget would immediately return an error and misjudge a healthy boot (fixed and tested).
 
 ---
 
-## 5. `superviseBoot()` — 编排主体
+## 5. `superviseBoot()` — the orchestrator
 
 ```ts
 for (attempt = 0; attempt <= retries; attempt++) {
@@ -104,40 +100,35 @@ for (attempt = 0; attempt <= retries; attempt++) {
   if (last.kind === 'ok') {
     confirmed = await confirmStable(...)
     if (confirmed.ok) {
-      recordSuccess(...)            // 清零计数、清围栏、写 latest-good + history 快照
+      recordSuccess(...)            // clear counters, clear fence, write latest-good + history
       return { ok: true, supervisor, url }
     }
-    kill(); last = 失败判定
+    kill(); last = failed verdict
   }
   if (attempt < retries && isTransient(last)) continue
   break
 }
 
-// 收尾：计数 + 决定回滚
+// Wrap-up: count and decide rollback
 if (kind === 'host' || kind === 'ui') {
-  incrementFailure(...)             // 同类计数 +1，异类清零；写 lastFailure
-  rolled = await maybeRollback(...) // 见 state-and-rollback.md
+  incrementFailure(...)             // same-kind +1, other kind reset; writes lastFailure
+  rolled = await maybeRollback(...) // see state-and-rollback.md
   return { ok: false, ..., rolledBack, rollbackCancelled, retriesExhausted }
 }
-return { ok: false, failureKind: 'unknown', ... }   // unknown 不计分
+return { ok: false, failureKind: 'unknown', ... }   // unknown is not counted
 ```
 
 ---
 
-## 6. 其它
+## 6. Misc
 
-- **`ensurePortFlag`**：命令里已带 `--port <值>` 则尊重；裸 `--port`（无值）会补齐；否则追加 `--port <port>`。
-- **子进程输出**：`attachStdio: false` 时通过 `onOutput` 写入 `host.log` 并镜像到可见窗口；
-  `hasHostFailureMarker` 匹配的 fail-loud 关键字：`plugin tree failed to load` /
-  `failed to load plugin` / `cannot get property` / `unhandled exception`（大小写不敏感）。
-- **回调约定**：健康时子进程由调用方持有（`cli.ts` 里 `await supervisor.exit` 保持进程存活并等待退出）；
-  任何失败路径子进程都已在 bootAttempt 内 kill，不会残留。
+- **`ensurePortFlag`**: respects an existing `--port <value>` in the command; completes a bare trailing `--port`; otherwise appends `--port <port>`.
+- **Child output**: with `attachStdio: false`, output flows through `onOutput` into `host.log` and is mirrored to the visible window; `hasHostFailureMarker` matches the fail-loud keywords `plugin tree failed to load` / `failed to load plugin` / `cannot get property` / `unhandled exception` (case-insensitive).
+- **Ownership contract**: on health the child is handed to the caller (`cli.ts` awaits `supervisor.exit` to keep the process alive and wait for exit); every failure path has already killed the child inside `bootAttempt`.
 
 ---
 
-## 7. 修改指南
+## 7. Modification guide
 
-- 新增失败形态 → 在 `bootAttempt` 的分类处扩展，并补 `guard.spec.ts` 回归测试
-  （mock `spawnDsh` / `detectUi`，断言分类与 kill 行为）。
-- 调整重试策略 → 只改 `isTransient` 与 `retries` 传参，测试用 `guard.spec.ts` 的
-  "non-transient failure stops the loop early" 用例验证语义。
+- New failure shape → extend the classification in `bootAttempt` and add a `guard.spec.ts` regression test (mock `spawnDsh` / `detectUi`, assert the classification and the kill behavior).
+- Retry policy changes → touch only `isTransient` and the `retries` argument; `guard.spec.ts`'s "non-transient failure stops the loop early" case pins the semantics.

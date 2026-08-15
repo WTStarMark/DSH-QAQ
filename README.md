@@ -1,6 +1,6 @@
 # QAQ — DeepSeek Harness Launch Resilience Guard
 
-[Simplified Chinese](./README.zh.md)
+[简体中文](./README.zh.md)
 
 QAQ is a **launch resilience guard** for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH). When a disrupted profile configuration prevents DSH from starting normally — a crashed host **or** a red-screened Web UI — QAQ automatically restores the configuration snapshot from the last successful boot and restarts, while preserving the broken config for manual recovery.
 
@@ -42,6 +42,7 @@ qaq dsh web --port 3080 --yes
 ```
 
 > **Which `dsh` runs?** The guard defaults to `dsh web` (`PATH` resolution). To run from the DSH source tree instead:
+> 
 > ```bash
 > QAQ_DSH_CMD="node --import tsx/esm apps/cli/src/bin.ts web" qaq dsh web --cwd /path/to/dsh-checkout
 > ```
@@ -50,15 +51,15 @@ qaq dsh web --port 3080 --yes
 
 ## Commands
 
-| Command | Purpose |
-|---------|---------|
-| `qaq dsh web [--port N] [--yes]` | supervised startup: detect host/UI failure -> count -> roll back when triggered -> restart (with anti-loop) |
-| `qaq status` | print a summary of `~/.dsh/.qaq/state.json` |
-| `qaq backup [--profile web]` | snapshot the current profile as last-good |
-| `qaq restore --to <snapDir> [--profile web]` | restore a profile from a snapshot directory |
-| `qaq reset --profile web` | zero the failure counters |
-| `qaq console` | open the interactive menu (lazy launcher, same as `bin\qaq-web.cmd`) |
-| `qaq install-plugin [--profile web]` | auto-mount the `dsh-qaq` backup plugin into a profile |
+| Command                                      | Purpose                                                                                                     |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `qaq dsh web [--port N] [--yes]`             | supervised startup: detect host/UI failure -> count -> roll back when triggered -> restart (with anti-loop) |
+| `qaq status`                                 | print a summary of `~/.dsh/.qaq/state.json`                                                                 |
+| `qaq backup [--profile web]`                 | snapshot the current profile as last-good                                                                   |
+| `qaq restore --to <snapDir> [--profile web]` | restore a profile from a snapshot directory                                                                 |
+| `qaq reset --profile web`                    | zero the failure counters                                                                                   |
+| `qaq console`                                | open the interactive menu (lazy launcher, same as `bin\qaq-web.cmd`)                                        |
+| `qaq install-plugin [--profile web]`         | auto-mount the `dsh-qaq` backup plugin into a profile                                                       |
 
 Global: `--yes` auto-confirms rollbacks.
 
@@ -98,14 +99,14 @@ The console clears the screen before every menu render — the window always sho
 
 ### Troubleshooting
 
-| Symptom | What to do |
-|---------|-----------|
-| `Pre-launch self-check failed` — dsh not found | Put `dsh` on `PATH`, set `QAQ_DSH_CMD`, or pass `--cwd <dir>` pointing at the DSH checkout |
-| `Port already in use` — port busy | Stop the other process, or pick another port: `--port N` |
-| UI red-screens again after a rollback | Inspect the logs and the preserved bad config: `qaq console` → **[7]**, or read `~/.dsh/.qaq/log/` (`error.log`, `access.log`, `host.log`) |
-| Guard says `anti-loop fence is active` | A rollback already happened within the last 5 minutes. Fix the config manually (see `rolled-back/`), then `qaq reset --profile web` to clear the counters |
-| Want to undo a rollback | `qaq restore --to <snapDir> --profile web` with any directory under `~/.dsh/.qaq/history/` (or `rolled-back/`) |
-| dsh-qaq not snapshotting | The plugin only writes on a **clean host settle**; it does not write on a failed boot. Confirm it is listed in the profile bundles (`qaq console` → **[2]** shows the last snapshot) and that `install-plugin` reported success |
+| Symptom                                        | What to do                                                                                                                                                                                                                      |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Pre-launch self-check failed` — dsh not found | Put `dsh` on `PATH`, set `QAQ_DSH_CMD`, or pass `--cwd <dir>` pointing at the DSH checkout                                                                                                                                      |
+| `Port already in use` — port busy              | Stop the other process, or pick another port: `--port N`                                                                                                                                                                        |
+| UI red-screens again after a rollback          | Inspect the logs and the preserved bad config: `qaq console` → **[7]**, or read `~/.dsh/.qaq/log/` (`error.log`, `access.log`, `host.log`)                                                                                      |
+| Guard says `anti-loop fence is active`         | A rollback already happened within the last 5 minutes. Fix the config manually (see `rolled-back/`), then `qaq reset --profile web` to clear the counters                                                                       |
+| Want to undo a rollback                        | `qaq restore --to <snapDir> --profile web` with any directory under `~/.dsh/.qaq/history/` (or `rolled-back/`)                                                                                                                  |
+| dsh-qaq not snapshotting                       | The plugin only writes on a **clean host settle**; it does not write on a failed boot. Confirm it is listed in the profile bundles (`qaq console` → **[2]** shows the last snapshot) and that `install-plugin` reported success |
 
 ### Data locations
 
@@ -115,12 +116,12 @@ The console clears the screen before every menu render — the window always sho
 
 ## Supervised `dsh web` options
 
-| Option | Meaning | Default |
-|--------|---------|---------|
-| `--confirm-ms <ms>` | stable-healthy confirmation window before snapshotting | `20000` |
-| `--ui-timeout <ms>` | max wait for the UI to settle during the L3 probe | `25000` |
-| `--threshold <n>` | consecutive same-kind failures that trigger a rollback | `3` |
-| `--cwd <dir>` | working directory for the supervised `dsh` (set to the checkout for source launch) | process cwd |
+| Option              | Meaning                                                                            | Default     |
+| ------------------- | ---------------------------------------------------------------------------------- | ----------- |
+| `--confirm-ms <ms>` | stable-healthy confirmation window before snapshotting                             | `20000`     |
+| `--ui-timeout <ms>` | max wait for the UI to settle during the L3 probe                                  | `25000`     |
+| `--threshold <n>`   | consecutive same-kind failures that trigger a rollback                             | `3`         |
+| `--cwd <dir>`       | working directory for the supervised `dsh` (set to the checkout for source launch) | process cwd |
 
 ## Detection criteria (L3, empirically verified)
 
@@ -142,12 +143,12 @@ The console clears the screen before every menu render — the window always sho
 
 Every record is one JSON line (`{ ts, level, cat, phase?, msg, ...meta }`) so the trail is machine-parseable, split across four files under `log/`, each rotating by size (256 KB → `.1.log`, keeping 5 copies):
 
-| File | Content |
-|------|---------|
-| `qaq.log` | everything (info + warn + error), the canonical record |
-| `error.log` | warn/error only — grep for trouble fast |
+| File         | Content                                                                                       |
+| ------------ | --------------------------------------------------------------------------------------------- |
+| `qaq.log`    | everything (info + warn + error), the canonical record                                        |
+| `error.log`  | warn/error only — grep for trouble fast                                                       |
 | `access.log` | crash-audit trail: boot verdicts, snapshots, rollbacks, resets, plugin mounts, manual restore |
-| `host.log` | raw supervised `dsh` stdout/stderr (mirrored to the visible window) |
+| `host.log`   | raw supervised `dsh` stdout/stderr (mirrored to the visible window)                           |
 
 ## Trigger & anti-loop
 
@@ -178,36 +179,38 @@ Integration fixture: `qaq-test-plugins/dsh-broken-theme` (injects a service that
 
 ## Repository layout
 
-| Path | Purpose |
-|------|---------|
-| `src/cli.ts` | command surface + supervised loop |
-| `src/guard.ts` | superviseBoot orchestration (host ready -> UI detect -> count/rollback) |
-| `src/spawn-dsh.ts` | spawn dsh web, inherit env, readiness/exit tracking |
-| `src/cdp.ts` | minimal CDP client (headless Chrome, no Playwright) |
-| `src/detector-ui.ts` | L3 text criteria |
-| `src/store.ts` | atomic `~/.dsh/.qaq` read/write + snapshot management + lock |
-| `src/rollback.ts` | rollback + broken-config backup + anti-loop + success bookkeeping |
-| `src/env.ts` | auto-discovery + pre-launch self-check (dsh / browser / port) |
-| `src/console.ts` | interactive menu GUI (lazy launcher, CMD window) |
-| `src/install-plugin.ts` | auto-mount the dsh-qaq backup plugin (rollback-safe) |
-| `src/paths.ts` · `src/log.ts` | path helpers; structured multi-file rotating logger |
-| `packages/dsh-qaq/` | DSH backup plugin (snapshots after host boot settles; backup-only) |
-| `bin/` | `qaq` / `qaq-web.cmd` / `qaq-install.cmd` launchers (+ `qaq-web.zh.cmd` / `qaq-install.zh.cmd` Chinese variants) |
-| `tools/` · `test/` | integration/smoke scripts; vitest specs |
+| Path                          | Purpose                                                                                                          |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `src/cli.ts`                  | command surface + supervised loop                                                                                |
+| `src/guard.ts`                | superviseBoot orchestration (host ready -> UI detect -> count/rollback)                                          |
+| `src/spawn-dsh.ts`            | spawn dsh web, inherit env, readiness/exit tracking                                                              |
+| `src/cdp.ts`                  | minimal CDP client (headless Chrome, no Playwright)                                                              |
+| `src/detector-ui.ts`          | L3 text criteria                                                                                                 |
+| `src/store.ts`                | atomic `~/.dsh/.qaq` read/write + snapshot management + lock                                                     |
+| `src/rollback.ts`             | rollback + broken-config backup + anti-loop + success bookkeeping                                                |
+| `src/env.ts`                  | auto-discovery + pre-launch self-check (dsh / browser / port)                                                    |
+| `src/console.ts`              | interactive menu GUI (lazy launcher, CMD window)                                                                 |
+| `src/install-plugin.ts`       | auto-mount the dsh-qaq backup plugin (rollback-safe)                                                             |
+| `src/paths.ts` · `src/log.ts` | path helpers; structured multi-file rotating logger                                                              |
+| `packages/dsh-qaq/`           | DSH backup plugin (snapshots after host boot settles; backup-only)                                               |
+| `bin/`                        | `qaq` / `qaq-web.cmd` / `qaq-install.cmd` launchers (+ `qaq-web.zh.cmd` / `qaq-install.zh.cmd` Chinese variants) |
+| `tools/` · `test/`            | integration/smoke scripts; vitest specs                                                                          |
 
 ## Documentation
 
 Developer-oriented deep-dives for secondary development:
 
-| Document | Covers |
-|----------|--------|
-| [architecture.md](docs/architecture.md) | module map, boot sequence, state machine, data flow |
-| [guard-lifecycle.md](docs/guard-lifecycle.md) | supervised boot flow, failure classification, transient retry, confirmation window |
-| [state-and-rollback.md](docs/state-and-rollback.md) | state.json, snapshots, anti-loop fence, guard lock |
-| [ui-detection.md](docs/ui-detection.md) | headless-Chrome CDP client, L3 text criteria, probe timing |
-| [console-and-env.md](docs/console-and-env.md) | lazy launcher console, environment auto-discovery, plugin mounting |
-| [logging.md](docs/logging.md) | structured log format, four channels, rotation |
+| Document                                            | Covers                                                                             |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [architecture.md](docs/architecture.md)             | module map, boot sequence, state machine, data flow                                |
+| [guard-lifecycle.md](docs/guard-lifecycle.md)       | supervised boot flow, failure classification, transient retry, confirmation window |
+| [state-and-rollback.md](docs/state-and-rollback.md) | state.json, snapshots, anti-loop fence, guard lock                                 |
+| [ui-detection.md](docs/ui-detection.md)             | headless-Chrome CDP client, L3 text criteria, probe timing                         |
+| [console-and-env.md](docs/console-and-env.md)       | lazy launcher console, environment auto-discovery, plugin mounting                 |
+| [logging.md](docs/logging.md)                       | structured log format, four channels, rotation                                     |
 | [testing.md](docs/testing.md) | unit-test matrix, smoke, real-DSH integration, fault injection |
+
+> Chinese versions: `docs/*.zh.md` (default-named files are English).
 
 ## License
 
