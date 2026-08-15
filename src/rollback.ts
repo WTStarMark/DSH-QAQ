@@ -1,6 +1,6 @@
 /**
  * Rollback engine: on a threshold of like-kind consecutive failures, restore the
- * last-good snapshot into the profile dir, first preserving the坏 config in
+ * last-good snapshot into the profile dir, first preserving the bad config in
  * rolled-back/, and enforce the anti-loop fence (one rollback per time window).
  */
 import { existsSync, mkdirSync, readFileSync, copyFileSync, writeFileSync } from 'node:fs'
@@ -28,6 +28,8 @@ export interface RollbackOutcome {
   snappedGood: boolean
   restored: boolean
   badBackedUp: boolean
+  /** True when the threshold was reached but the user declined the rollback at the prompt. */
+  cancelled?: boolean
   /** Directory of the bad snapshot saved to rolled-back/. */
   rolledBackDir?: string
 }
@@ -124,7 +126,7 @@ export async function maybeRollback(ctx: RollbackContext): Promise<RollbackOutco
     return { triggered: false, snappedGood: false, restored: false, badBackedUp: false }
   }
 
-  // Backup the坏 (current live) config before overwriting.
+  // Backup the bad (current live) config before overwriting.
   const ts = new Date().toISOString().replace(/[:.]/g, '-')
   const rolledBackDir = join(q, 'rolled-back', ts)
   mkdirSync(rolledBackDir, { recursive: true })
@@ -152,7 +154,7 @@ export async function maybeRollback(ctx: RollbackContext): Promise<RollbackOutco
   }
   if (!proceed) {
     ctx.log.info('rollback cancelled by user.')
-    return { triggered: true, snappedGood: false, restored: false, badBackedUp: true, rolledBackDir }
+    return { triggered: true, snappedGood: false, restored: false, badBackedUp: true, cancelled: true, rolledBackDir }
   }
 
   // Restore.
@@ -191,9 +193,9 @@ export function recordSuccess(home: string, profile: string, log: Logger, packag
   const q = qaqDir(home)
   const ts = new Date().toISOString().replace(/[:.]/g, '-')
   // latest-good: write fresh, keep as the canonical copy.
-  writeSnapshot(home, join(q, 'latest-good'), { packageJson: packageJsonPath, patchYml: patchYmlPath })
+  writeSnapshot(home, join(q, 'latest-good'), { packageJson: packageJsonPath, patchYml: patchYmlPath }, profile)
   // history: time-stamped copy, prune to 5.
-  writeSnapshot(home, join(q, 'history', ts), { packageJson: packageJsonPath, patchYml: patchYmlPath })
+  writeSnapshot(home, join(q, 'history', ts), { packageJson: packageJsonPath, patchYml: patchYmlPath }, profile)
   pruneSnapshots(home, 'history', 5)
   const good = join(q, 'latest-good', 'manifest.json')
   // record lastGoodSnapshot path in state

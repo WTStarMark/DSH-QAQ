@@ -144,7 +144,7 @@ async function cmdDsh(args: CliArgs): Promise<void> {
       return
     }
 
-    // Failed: if a rollback fired, restart once and monitor the restart.
+    // Failed: if a rollback was applied, restart once and monitor the restart.
     if (verdict.rolledBack) {
       log.warn('rollback applied; restarting dsh web once…')
       const second = await superviseBoot({ ...guardOpts, autoConfirm: true })
@@ -154,6 +154,13 @@ async function cmdDsh(args: CliArgs): Promise<void> {
         return
       }
       log.error('post-rollback restart still failing (kind=' + second.failureKind + '). Stopping to avoid a rollback loop. Inspect ' + join(qaqDir(home), 'rolled-back') + ' and fix config.')
+      return
+    }
+
+    // Failed: the user declined the rollback at the confirmation prompt. Do not
+    // restart (an auto-confirmed restart would bypass their explicit refusal).
+    if (verdict.rollbackCancelled) {
+      log.warn('rollback cancelled by user. Stopping without auto-restart. Inspect ' + join(qaqDir(home), 'rolled-back') + ' and fix config.')
       return
     }
 

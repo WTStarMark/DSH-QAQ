@@ -46,11 +46,15 @@ describe('store', () => {
     // write 6 snapshots
     for (let i = 0; i < 6; i++) {
       const ts = '2026-08-15T00-00-' + String(i).padStart(2, '0') + '-000Z'
-      writeSnapshot(home, join(qaqDir(home), 'history', ts), { packageJson: join(pr, 'package.json'), patchYml: join(pr, 'cordis.patch.yml') })
+      writeSnapshot(home, join(qaqDir(home), 'history', ts), { packageJson: join(pr, 'package.json'), patchYml: join(pr, 'cordis.patch.yml') }, 'web')
     }
     pruneSnapshots(home, 'history', 5)
     const snaps = listSnapshots(home, 'history')
     expect(snaps.length).toBe(5)
+    // The manifest must record the actual profile name (regression: it used to
+    // derive a bogus name from the snapshot path).
+    const manifest = JSON.parse(readFileSync(join(snaps[0], 'manifest.json'), 'utf8'))
+    expect(manifest.profile).toBe('web')
   })
 
   it('restores snapshot files into a profile dir', () => {

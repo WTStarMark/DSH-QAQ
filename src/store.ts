@@ -37,7 +37,7 @@ export interface QaqState {
 }
 
 /** Files that make up one configuration snapshot. */
-export type SnapshotFile = 'package.json' | 'cordis.patch.yml' | 'settings.yaml'
+export type SnapshotFile = 'package.json' | 'cordis.patch.yml'
 
 const STATE_FILENAME = 'state.json'
 
@@ -130,14 +130,14 @@ export function profileState(state: QaqState, profile: string): ProfileState {
 }
 
 /** Snapshot the given list of source paths (profile package.json + patch) into a snapshot dir. */
-export function writeSnapshot(home: string, snapDir: string, sources: { packageJson: string; patchYml: string | null }): void {
+export function writeSnapshot(home: string, snapDir: string, sources: { packageJson: string; patchYml: string | null }, profile: string): void {
   mkdirSync(snapDir, { recursive: true })
   copyFileSync(sources.packageJson, join(snapDir, 'package.json'))
   if (sources.patchYml && existsSync(sources.patchYml)) {
     copyFileSync(sources.patchYml, join(snapDir, 'cordis.patch.yml'))
   }
   writeFileSync(join(snapDir, 'manifest.json'), JSON.stringify({
-    profile: basename(join(snapDir, '../../..')),
+    profile,
     ts: new Date().toISOString(),
   }, null, 2), 'utf8')
 }

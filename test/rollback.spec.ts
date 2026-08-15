@@ -81,6 +81,20 @@ describe('rollback', () => {
     expect(out.triggered).toBe(false)
   })
 
+  it('marks the outcome cancelled when the user declines, without restoring', async () => {
+    setupProfile('cancel', '{"name":"good"}')
+    recordSuccess(home, 'cancel', log, join(profileDir(home, 'cancel'), 'package.json'), join(profileDir(home, 'cancel'), 'cordis.patch.yml'))
+    setupProfile('cancel', '{"name":"broken"}')
+    const s = readState(home); const p = profileState(s, 'cancel'); p.uiFailures = 3
+    writeState(home, s)
+    const out = await maybeRollback({ home, profile: 'cancel', kind: 'ui', autoConfirm: false, confirmYes: async () => false, log })
+    expect(out.triggered).toBe(true)
+    expect(out.cancelled).toBe(true)
+    expect(out.restored).toBe(false)
+    // Live config must remain untouched after a decline.
+    expect(readFileSync(join(profileDir(home, 'cancel'), 'package.json'), 'utf8')).toBe('{"name":"broken"}')
+  })
+
   it('recordSuccess snapshots latest-good and clears counters/fence', () => {
     setupProfile('web', '{"name":"good"}')
     const s = readState(home); const p = profileState(s, 'web'); p.hostFailures = 7; p.rolledBackAt = new Date().toISOString()
