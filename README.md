@@ -44,7 +44,7 @@ qaq dsh web --port 3080 --yes
 > QAQ_DSH_CMD="node --import tsx/esm apps/cli/src/bin.ts web" qaq dsh web --cwd /path/to/dsh-checkout
 > ```
 
-> **Pre-launch self-check**: `qaq dsh web` (and the console) auto-discover the `dsh` command (PATH → `QAQ_DSH_CMD` → nearby DSH checkout scan), pick a Chrome/Chromium/Edge binary for the UI probe, and verify the target port is free — problems are reported with actionable Chinese hints before anything is spawned.
+> **Pre-launch self-check**: `qaq dsh web` (and the console) auto-discover the `dsh` command — `QAQ_DSH_CMD` → `--cwd` → a nearby DSH checkout (ancestors of the current directory, plus a sibling checkout sitting next to it, e.g. QAQ and `deepseek-harness` side by side) → `PATH` — pick a Chrome/Chromium/Edge binary for the UI probe, and verify the target port is free. Problems are reported with actionable Chinese hints before anything is spawned.
 
 ## Commands
 

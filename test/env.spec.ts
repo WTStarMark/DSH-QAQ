@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { preflight, resolveCommand, findCheckoutCli, isPortFree, resolveDshHome } from '../src/env.ts'
+import { preflight, resolveCommand, findCheckoutCli, isPortFree, resolveDshHome, findAutoCheckout } from '../src/env.ts'
 import { qaqDir, profileDir } from '../src/paths.ts'
 import { Logger } from '../src/log.ts'
 import { installPlugin } from '../src/install-plugin.ts'
@@ -42,6 +42,24 @@ describe('env.findCheckoutCli / resolveCommand', () => {
     expect(r.cwd).toBe(root);
     rmSync(root, { recursive: true, force: true });
     if (prev !== undefined) process.env.QAQ_DSH_CMD = prev;
+  });
+
+  it('auto-discovers a sibling checkout next to the cwd (the qaq-web.cmd layout)', () => {
+    // root/checkout = the DSH clone; root/tool = where the user runs qaq from.
+    const root = mkdtempSync(join(tmpdir(), 'dsh-sibling-'));
+    mkdirSync(join(root, 'checkout', 'apps', 'cli', 'src'), { recursive: true });
+    writeFileSync(join(root, 'checkout', 'apps', 'cli', 'src', 'bin.ts'), '');
+    mkdirSync(join(root, 'tool'), { recursive: true });
+    const prev = process.cwd();
+    try {
+      process.chdir(join(root, 'tool'));
+      const r = findAutoCheckout();
+      expect(r).not.toBeNull();
+      expect(r?.root).toBe(join(root, 'checkout'));
+    } finally {
+      process.chdir(prev);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

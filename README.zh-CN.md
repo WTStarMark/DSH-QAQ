@@ -44,7 +44,7 @@ qaq dsh web --port 3080 --yes
 > QAQ_DSH_CMD="node --import tsx/esm apps/cli/src/bin.ts web" qaq dsh web --cwd /path/to/dsh-checkout
 > ```
 
-> **启动前自检**：`qaq dsh web`（和控制台）会自动发现 `dsh` 命令（PATH → `QAQ_DSH_CMD` → 就近 DSH checkout 扫描）、挑选 Chrome/Chromium/Edge 作为 UI 探测浏览器、并确认目标端口空闲——发现问题会在拉起任何进程前给出中文可操作提示。
+> **启动前自检**：`qaq dsh web`（和控制台）会自动发现 `dsh` 命令——`QAQ_DSH_CMD` → `--cwd` → 就近的 DSH checkout（当前目录的祖先链，以及**与当前目录并排的兄弟 checkout**，如 QAQ 与 `deepseek-harness` 同目录并列）→ `PATH`——挑选 Chrome/Chromium/Edge 作为 UI 探测浏览器、确认目标端口空闲。发现问题会在拉起任何进程前给出中文可操作提示。
 
 ## 命令面
 

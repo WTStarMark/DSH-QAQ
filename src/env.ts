@@ -9,7 +9,7 @@
  * Nothing here is fatal by itself — it reports problems so the CLI can show
  * clear, actionable Chinese guidance before failing.
  */
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import net from 'node:net'
 import { findBrowser as findBrowserFromCdp } from './cdp.ts'
@@ -61,7 +61,9 @@ function findDshBinary(): string | undefined {
   return undefined
 }
 
-/** Look for a DSH checkout near process.cwd() (self + a few parents). */
+/** Look for a DSH checkout near process.cwd(): its ancestor chain, then a
+ * sibling checkout next to the cwd (the common "tool sits beside the checkout"
+ * layout, e.g. QAQ and deepseek-harness side by side under one project dir). */
 export function findAutoCheckout(): { root: string; cli: string } | null {
   let dir = process.cwd()
   for (let i = 0; i < 5; i++) {
@@ -70,6 +72,20 @@ export function findAutoCheckout(): { root: string; cli: string } | null {
     const parent = dirname(dir)
     if (parent === dir) break
     dir = parent
+  }
+  // Sibling scan: any direct child of the cwd's parent that looks like a DSH
+  // checkout (has apps/cli). Covers double-clicking qaq-web.cmd from the tool's
+  // own directory while the checkout lives next to it.
+  const parent = dirname(process.cwd())
+  if (parent !== process.cwd()) {
+    try {
+      for (const entry of readdirSync(parent, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue
+        const candidate = join(parent, entry.name)
+        const cli = findCheckoutCli(candidate)
+        if (cli) return { root: candidate, cli }
+      }
+    } catch { /* unreadable parent: give up on the sibling scan */ }
   }
   return null
 }
