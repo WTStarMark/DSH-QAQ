@@ -36,7 +36,9 @@ function writeSnapshotHome(home, profileName, profileDir) {
       copyFileSync(src, join(root, "history", ts, f));
     }
   }
-  writeFileSync(join(root, "latest-good", "manifest.json"), JSON.stringify({ profile: profileName, ts: (/* @__PURE__ */ new Date()).toISOString() }, null, 2), "utf8");
+  const manifest = JSON.stringify({ profile: profileName, ts: (/* @__PURE__ */ new Date()).toISOString() }, null, 2);
+  writeFileSync(join(root, "latest-good", "manifest.json"), manifest, "utf8");
+  writeFileSync(join(root, "history", ts, "manifest.json"), manifest, "utf8");
   prune(join(root, "history"), KEEP);
 }
 function apply(ctx) {

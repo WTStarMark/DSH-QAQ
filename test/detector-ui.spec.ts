@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { classifyDom, parseFailedEntries, extractFailureDetail, FAILED_MARKER } from '../src/detector-ui.ts'
+import { classifyDom, parseFailedEntries, extractFailureDetail, FAILED_MARKER, pollUi } from '../src/detector-ui.ts'
+import type { DomSnapshot } from '../src/detector-ui.ts'
+import type { CdpSession } from '../src/cdp.ts'
 
 describe('detector-ui text classification (L3 judge)', () => {
   it('flags the real red-screen body text as failed', () => {
@@ -35,5 +37,28 @@ web boot: 1 entry did not activate dsh-broken-theme: pending (waiting for servic
   it('extracts the failure detail line', () => {
     const body = 'HARNESS\nFailed to load plugins\nweb boot: 1 entry did not activate dsh-x: pending (waiting for service: s)'
     expect(extractFailureDetail(body)).toContain('web boot:')
+  })
+})
+
+describe('pollUi at-least-once probe (--confirm-ms 0 regression)', () => {
+  function fakeSession(snap: DomSnapshot): CdpSession {
+    return { evaluate: async () => snap, close: async () => {} }
+  }
+
+  it('reads the DOM at least once even with a 0ms timeout (no immediate error)', async () => {
+    const v = await pollUi(fakeSession({ bodyText: 'HARNESS Loading…', hasComposer: false, isBootPage: true }), 'http://127.0.0.1:3080', 0)
+    expect(v.kind).toBe('loading') // not 'error': a real probe happened
+    expect(v.ok).toBe(false)
+  })
+
+  it('returns ok immediately when the first probe is healthy, regardless of timeout', async () => {
+    const v = await pollUi(fakeSession({ bodyText: 'chat area', hasComposer: true, isBootPage: false }), 'http://127.0.0.1:3080', 0)
+    expect(v.kind).toBe('ok')
+    expect(v.ok).toBe(true)
+  })
+
+  it('still fails fast on a red screen with a 0ms timeout', async () => {
+    const v = await pollUi(fakeSession({ bodyText: 'Failed to load plugins', hasComposer: false, isBootPage: false }), 'http://127.0.0.1:3080', 0)
+    expect(v.kind).toBe('failed')
   })
 })

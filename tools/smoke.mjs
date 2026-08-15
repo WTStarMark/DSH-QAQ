@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
+const cli = fileURLToPath(new URL('../src/cli.ts', import.meta.url))
 const tmp = fileURLToPath(new URL('./.smoke-home', import.meta.url))
 const clone = process.env.QAQ_SMOKE_DSH_HOME || join(root, 'deepseek-harness')
 let failed = false
@@ -13,7 +14,14 @@ let failed = false
 function run(cmd, args, opts) {
   opts = opts || {}
   console.log('\n> ' + cmd + ' ' + args.join(' ') + (opts.cwd ? '  (cwd=' + opts.cwd + ')' : ''))
-  const r = spawnSync(cmd, args, { cwd: opts.cwd || root, stdio: 'inherit', env: { ...process.env, ...opts.env } })
+  // On Windows, `npx`/`node` resolve via .cmd/.exe shims that child_process only
+  // finds with a shell; on POSIX spawn directly.
+  const r = spawnSync(cmd, args, {
+    cwd: opts.cwd || root,
+    stdio: 'inherit',
+    env: { ...process.env, ...opts.env },
+    shell: process.platform === 'win32',
+  })
   if (r.status !== 0) { failed = true; console.error('[smoke] FAILED: ' + cmd + ' ' + args.join(' ')) }
   return r.status === 0
 }
@@ -31,7 +39,7 @@ writeFileSync(join(tmp, 'profiles', 'web', 'package.json'), JSON.stringify({ nam
 writeFileSync(join(tmp, 'profiles', 'web', 'cordis.patch.yml'), '[]')
 
 console.log('[smoke] seeding good snapshot...')
-run('node', ['--import', 'tsx/esm', 'src/cli.ts', 'backup', '--profile', 'web'], { env: { DSH_HOME: tmp } })
+run('node', ['--import', 'tsx/esm', cli, 'backup', '--profile', 'web'], { env: { DSH_HOME: tmp } })
 
 writeFileSync(join(tmp, 'profiles', 'web', 'cordis.patch.yml'), '- insert:\n    - id: nope\n      name: does-not-exist-xyz\n')
 console.log('[smoke] broken profile written')
@@ -40,7 +48,7 @@ console.log('[smoke] running guard once...')
 if (!isDir(join(clone, 'apps'))) {
   console.warn('[smoke] SKIP real-DSH integration: checkout not found at ' + clone + ' (set QAQ_SMOKE_DSH_HOME)')
 } else {
-  run('node', ['--import', 'tsx/esm', 'src/cli.ts', 'dsh', 'web', '--port', '3090', '--yes', '--cwd', clone, '--ui-timeout', '15000', '--confirm-ms', '3000'],
+  run('node', ['--import', 'tsx/esm', cli, 'dsh', 'web', '--port', '3090', '--yes', '--cwd', clone, '--ui-timeout', '15000', '--confirm-ms', '3000'],
     { env: { DSH_HOME: tmp, QAQ_DSH_CMD: 'node --import tsx/esm apps/cli/src/bin.ts web' }, cwd: clone })
   console.log('[smoke] integration complete')
 }

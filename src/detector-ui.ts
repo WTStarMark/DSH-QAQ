@@ -37,7 +37,7 @@ const DOM_PROBE =`
     // The boot card carries the HARNESS wordmark and has no composer.
     isBootPage = bodyText.includes('HARNESS') && !hasComposer;
   }
-  return { bodyText: bodyText.slice(0, 600), hasComposer, isBootPage };
+  return { bodyText: bodyText.slice(0, 1200), hasComposer, isBootPage };
 })()`
 
 export function classifyDom(snap: DomSnapshot): UiVerdict {
@@ -87,19 +87,35 @@ export async function pollUi(session: CdpSession, url: string, timeoutMs: number
   await session.evaluate(`window.location.href = ${JSON.stringify(url)}`)
   const start = Date.now()
   let last: UiVerdict | null = null
-  while (Date.now() - start < timeoutMs) {
+  // Probe at least once: a 0/negative timeout (e.g. --confirm-ms 0) must still
+  // yield one real DOM read instead of an immediate 'error'.
+  do {
     last = await probeOnce(session)
     if (last.kind === 'failed' || last.kind === 'ok') return last
     await sleep(500)
-  }
+  } while (Date.now() - start < timeoutMs)
   return last ?? { ok: false, kind: 'error', bodyText: '' }
 }
 
 export async function detectUi(url: string, timeoutMs = 25000, port = 0): Promise<UiVerdict> {
-  const debugPort = port > 0 ? port : (9000 + Math.floor(Math.random() * 900))
-  const session = await launchSession({ debugPort })
-  try { return await pollUi(session, url, timeoutMs) }
-  finally { await session.close() }
+  // A random debug port in 9000-9899 can collide with a foreign process; retry
+  // with a fresh random port instead of burning 15s and failing the boot.
+  const attempts = port > 0 ? 1 : 3
+  let lastErr: unknown
+  for (let i = 0; i < attempts; i++) {
+    const debugPort = port > 0 ? port : (9000 + Math.floor(Math.random() * 900))
+    try {
+      const session = await launchSession({ debugPort })
+      try { return await pollUi(session, url, timeoutMs) }
+      finally { await session.close() }
+    } catch (err) {
+      lastErr = err
+      const msg = err instanceof Error ? err.message : ''
+      // Explicit port or a missing browser: no point retrying.
+      if (port > 0 || /no Chrome|no Chromium/i.test(msg)) throw err
+    }
+  }
+  throw lastErr
 }
 
 function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)) }

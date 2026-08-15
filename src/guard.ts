@@ -63,7 +63,13 @@ async function bootAttempt(opts: GuardOptions): Promise<AttemptResult> {
   const dshEnv = { ...opts.dshEnv, DSH_HOME: home }
   const command = ensurePortFlag(opts.command, port)
 
-  const supervision = spawnDsh({ command, cwd: opts.cwd, env: dshEnv, port, portTimeoutMs: opts.portTimeoutMs ?? 30000 })
+  const log = new Logger(home)
+  const supervision = spawnDsh({
+    command, cwd: opts.cwd, env: dshEnv, port, portTimeoutMs: opts.portTimeoutMs ?? 30000,
+    // Capture child output: pipe it into host.log (and mirror to the visible window).
+    attachStdio: false,
+    onOutput: (chunk, stream) => log.host(chunk, stream),
+  })
 
   let hostReady = false
   let hostError: string | undefined
@@ -89,6 +95,17 @@ async function bootAttempt(opts: GuardOptions): Promise<AttemptResult> {
     return { kind: 'ui', error: ui.failureDetail ?? 'Failed to load plugins', killed: true }
   }
   if (ui.kind !== 'ok') {
+    // The host may have bound the port and THEN crashed (a boot-stage error
+    // after the server starts). The readiness probe already resolved, so the
+    // exit path never ran — check the child's liveness and fail-loud markers
+    // here, or this crash would be misclassified as an unknown UI timeout and
+    // never counted toward a rollback.
+    if (supervision.child.exitCode !== null || supervision.hasHostFailureMarker()) {
+      const marker = supervision.hasHostFailureMarker() ? '; fail-loud marker in output' : ''
+      const code = supervision.child.exitCode
+      supervision.kill()
+      return { kind: 'host', error: 'host exited during UI probe (code=' + code + ')' + marker, killed: true }
+    }
     // Neither healthy nor failed within the UI timeout. Always kill: a live child
     // left behind would hold the port during a retry (EADDRINUSE) and would keep
     // this guard's event loop alive, hanging the process after a reported failure.
@@ -123,6 +140,7 @@ export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
   const url = 'http://127.0.0.1:' + (opts.port ?? 3080)
 
   let last: AttemptResult | null = null
+  let exhausted = false
   for (let attempt = 0; attempt <= retries; attempt++) {
     last = await bootAttempt(opts)
     if (last.kind === 'ok') {
@@ -143,6 +161,7 @@ export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
       log.warn('transient boot failure (kind=' + last.kind + '): ' + last.error + '; retrying (' + (retries - attempt) + ' left)')
       continue
     }
+    exhausted = attempt >= retries // we broke out because every tolerance retry was used
     break // genuine failure, or retries exhausted
   }
   if (!last) last = { kind: 'unknown', error: 'no boot attempted', killed: true }
@@ -157,10 +176,10 @@ export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
     return {
       ok: false, failureKind: kind, error: lastOk.error,
       rolledBack: rolled.restored, rollbackCancelled: rolled.cancelled,
-      retriesExhausted: true,
+      retriesExhausted: exhausted,
     }
   }
-  return { ok: false, failureKind: 'unknown', error: lastOk.error, rolledBack: false, retriesExhausted: true }
+  return { ok: false, failureKind: 'unknown', error: lastOk.error, rolledBack: false, retriesExhausted: exhausted }
 }
 
 /** Confirm a healthy boot stays healthy for `confirmGoodMs`, then re-probe the UI once. */
@@ -172,8 +191,9 @@ async function confirmStable(supervisor: DshSupervisor, url: string, opts: Guard
     return { ok: false, kind: 'host', error: 'process exited during confirmation window (code=' + supervisor.child.exitCode + ')' }
   }
   // Re-probe the real DOM to verify the UI is still healthy (stable, no red screen).
+  // Clamp the probe budget to >= 1ms: a 0 confirm window must still re-read the DOM once.
   try {
-    const recheck = await detectUi(url, Math.min(confirmMs, 15000))
+    const recheck = await detectUi(url, Math.max(1, Math.min(confirmMs, 15000)))
     if (recheck.kind === 'ok') return { ok: true }
     if (recheck.kind === 'failed') return { ok: false, kind: 'ui', error: recheck.failureDetail ?? 'Failed to load plugins' }
     return { ok: false, kind: 'unknown', error: 'UI did not stay settled during confirmation (kind=' + recheck.kind + ')' }
@@ -183,7 +203,9 @@ async function confirmStable(supervisor: DshSupervisor, url: string, opts: Guard
 }
 
 function ensurePortFlag(cmd: string[], port: number): string[] {
-  if (cmd.some(a => a === '--port')) return cmd
+  // Respect an explicit --port <value> in the command; a trailing bare '--port'
+  // (no value) is incomplete and must be completed, not left hanging.
+  if (cmd.some((a, i) => a === '--port' && cmd[i + 1] !== undefined)) return cmd
   return [...cmd, '--port', String(port)]
 }
 

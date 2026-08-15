@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.log
 *.txt
+.qaq/
 qaq-test-home/
 qaq-clean-home/
 qaq-loop-home/

@@ -24,6 +24,8 @@ export interface DshSpawnOptions {
   portTimeoutMs: number
   /** Attach child stdio to the current process (a visible CMD window). Default true. */
   attachStdio?: boolean
+  /** Called with each captured chunk (only when attachStdio is false). */
+  onOutput?: (chunk: string, stream: 'stdout' | 'stderr') => void
 }
 
 export interface DshSupervisor {
@@ -58,8 +60,8 @@ export function spawnDsh(opts: DshSpawnOptions): DshSupervisor {
   })
 
   if (opts.attachStdio === false) {
-    child.stdout?.on('data', (d) => boundedPush(String(d)))
-    child.stderr?.on('data', (d) => boundedPush(String(d)))
+    child.stdout?.on('data', (d) => { boundedPush(String(d)); opts.onOutput?.(String(d), 'stdout') })
+    child.stderr?.on('data', (d) => { boundedPush(String(d)); opts.onOutput?.(String(d), 'stderr') })
   }
 
   let exitResolve!: (code: number | null) => void
@@ -68,8 +70,9 @@ export function spawnDsh(opts: DshSpawnOptions): DshSupervisor {
   child.on('error', (err) => { boundedPush('spawn error: ' + err.message); exitResolve(-1) })
 
   const hasHostFailureMarker = (): boolean => {
-    const text = chunks.join('')
-    return HOST_FAIL_KEYWORDS.some(k => text.includes(k))
+    // Case-insensitive: host log phrasing may vary (e.g. "Failed to load" vs "failed to load").
+    const text = chunks.join('').toLowerCase()
+    return HOST_FAIL_KEYWORDS.some(k => text.includes(k.toLowerCase()))
   }
 
   // Readiness: the port must open AND the child must survive a short grace

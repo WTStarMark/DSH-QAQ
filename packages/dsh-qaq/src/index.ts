@@ -40,7 +40,11 @@ function writeSnapshotHome(home: string, profileName: string, profileDir: string
       copyFileSync(src, join(root, 'history', ts, f))
     }
   }
-  writeFileSync(join(root, 'latest-good', 'manifest.json'), JSON.stringify({ profile: profileName, ts: new Date().toISOString() }, null, 2), 'utf8')
+  const manifest = JSON.stringify({ profile: profileName, ts: new Date().toISOString() }, null, 2)
+  // The history entry carries the same manifest as latest-good, so QAQ's
+  // manifest-filtered snapshot listing and `restore --to` recognize it too.
+  writeFileSync(join(root, 'latest-good', 'manifest.json'), manifest, 'utf8')
+  writeFileSync(join(root, 'history', ts, 'manifest.json'), manifest, 'utf8')
   prune(join(root, 'history'), KEEP)
 }
 

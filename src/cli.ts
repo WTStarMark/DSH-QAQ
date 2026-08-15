@@ -13,10 +13,13 @@ import { readState, writeState, profileState, acquireLock } from './store.ts'
 import { resolveDshHome, qaqDir, profileDir } from './paths.ts'
 import { Logger } from './log.ts'
 import { superviseBoot, type GuardOptions } from './guard.ts'
+import { openConsole } from './console.ts'
+import { installPlugin } from './install-plugin.ts'
+import { preflight } from './env.ts'
 import { maybeRollback, manualBackup, manualRestore, isUsable } from './rollback.ts'
 
 interface CliArgs {
-  mode: 'dsh' | 'status' | 'backup' | 'restore' | 'reset' | 'help'
+  mode: 'dsh' | 'status' | 'backup' | 'restore' | 'reset' | 'console' | 'install-plugin' | 'help'
   profile: string
   port?: number
   yes: boolean
@@ -35,6 +38,8 @@ Usage:
   qaq backup [--profile <name>]            snapshot the current profile as last-good
   qaq restore --to <snapDir> [--profile <name>]  restore a profile from a snapshot dir
   qaq reset --profile <name>               zero the failure counters
+  qaq console                             open the interactive menu (傻瓜式)
+  qaq install-plugin [--profile <name>]   auto-mount dsh-qaq backup plugin
 Globals:
   --yes                                     auto-confirm rollbacks
 dsh web options:
@@ -61,6 +66,8 @@ function parseCli(argv: string[]): CliArgs {
   if (first === 'backup') return { mode: 'backup', profile: val('--profile') ?? 'web', ...base }
   if (first === 'restore') return { mode: 'restore', profile: val('--profile') ?? 'web', restoreTo: val('--to'), ...base }
   if (first === 'reset') return { mode: 'reset', profile: val('--profile') ?? 'web', ...base }
+  if (first === 'console' || first === 'menu' || first === 'gui') return { mode: 'console', profile: val('--profile') ?? 'web', ...base }
+  if (first === 'install-plugin') return { mode: 'install-plugin', profile: val('--profile') ?? 'web', ...base }
   if (first === 'help' || first === '-h' || first === '--help') return { mode: 'help', profile: 'web', ...base }
   // 'dsh', 'web', or bare => dsh supervision.
   return { mode: 'dsh', profile: 'web', ...base }
@@ -76,6 +83,8 @@ async function main(): Promise<void> {
       if (!args.restoreTo) { process.stderr.write('[qaq] --to <snapDir> is required for restore\n'); return }
       return cmdRestore(args.profile, args.restoreTo)
     case 'reset': return cmdReset(args.profile)
+    case 'console': return cmdConsole(args)
+    case 'install-plugin': return cmdInstallPlugin(args.profile)
     case 'dsh': return cmdDsh(args)
   }
 }
@@ -111,21 +120,44 @@ function cmdReset(profile: string): void {
   const state = readState(home); const p = profileState(state, profile)
   p.hostFailures = 0; p.uiFailures = 0; delete p.lastFailure
   writeState(home, state); log.info('reset counters for profile ' + profile)
+  log.access('reset counters for profile ' + profile, { profile, action: 'reset' })
+}
+
+function cmdConsole(args: CliArgs): Promise<void> {
+  return openConsole(args.profile, {
+    yes: args.yes, port: args.port,
+    confirmMs: args.confirmMs, uiTimeoutMs: args.uiTimeoutMs, threshold: args.threshold,
+  })
+}
+
+function cmdInstallPlugin(profile: string): void {
+  const home = resolveDshHome(); const log = new Logger(home)
+  const r = installPlugin(home, profile, log)
+  log.access('install-plugin result for profile ' + profile + ': ' + r.message, { profile, action: 'install-plugin', ok: r.ok })
+  process.stdout.write((r.ok ? '[qaq] ' : '[qaq][error] ') + r.message + '\n')
 }
 
 async function cmdDsh(args: CliArgs): Promise<void> {
   const home = resolveDshHome(); const log = new Logger(home)
   const port = args.port ?? 3080
+
+  const report = await preflight({ cwd: args.cwd, port })
+  const fatal = report.problems.filter(function (x) { return x.sev === 'error' })
+  if (fatal.length) {
+    log.error('启动前自检未通过：')
+    for (const f of fatal) log.error('  ' + f.message + ' -> ' + f.hint)
+    log.error('可尝试：qaq console 打开交互式控制台，或设置 QAQ_DSH_CMD / --cwd。')
+    return
+  }
+
   let release
   try { release = acquireLock(home) } catch (e) { log.error(String(e instanceof Error ? e.message : e)); return }
 
-  const command = process.env.QAQ_DSH_CMD
-    ? process.env.QAQ_DSH_CMD.split(' ').filter(Boolean)
-    : ['dsh', 'web']
+  const command = report.command
   const dshEnv: Record<string, string | undefined> = {}
 
   const guardOpts: GuardOptions = {
-    home, profile: args.profile, command, cwd: args.cwd ?? process.cwd(), port,
+    home, profile: args.profile, command, cwd: report.cwd, port,
     dshEnv, autoConfirm: args.yes,
     retries: 1,
     confirmGoodMs: args.confirmMs,

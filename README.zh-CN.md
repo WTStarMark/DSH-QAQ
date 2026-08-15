@@ -18,6 +18,10 @@ DSH Web 存在一种「宿主活、UI 红屏」的失败模式：宿主进程正
 
 ## 安装 / 快速上手
 
+**一键安装（Windows，傻瓜式）**：双击 `bin\qaq-install.cmd`（装依赖 + 构建），再双击 `bin\qaq-web.cmd` 打开交互式守卫控制台——无需记任何命令。
+
+手动安装：
+
 ```bash
 pnpm install
 pnpm build   # 产出 dist/qaq.mjs 单文件可执行
@@ -40,6 +44,8 @@ qaq dsh web --port 3080 --yes
 > QAQ_DSH_CMD="node --import tsx/esm apps/cli/src/bin.ts web" qaq dsh web --cwd /path/to/dsh-checkout
 > ```
 
+> **启动前自检**：`qaq dsh web`（和控制台）会自动发现 `dsh` 命令（PATH → `QAQ_DSH_CMD` → 就近 DSH checkout 扫描）、挑选 Chrome/Chromium/Edge 作为 UI 探测浏览器、并确认目标端口空闲——发现问题会在拉起任何进程前给出中文可操作提示。
+
 ## 命令面
 
 | 命令 | 作用 |
@@ -49,8 +55,59 @@ qaq dsh web --port 3080 --yes
 | `qaq backup [--profile web]` | 手动快照当前 profile 为 last-good |
 | `qaq restore --to <snapDir> [--profile web]` | 手动从某快照还原 profile |
 | `qaq reset --profile web` | 清零失败计数 |
+| `qaq console` | 打开交互式菜单（傻瓜式，同 `bin\qaq-web.cmd`） |
+| `qaq install-plugin [--profile web]` | 自动把 dsh-qaq 备份插件挂载进 profile |
 
 全局开关：`--yes` 自动确认回滚。
+
+## 一键控制台（`qaq console` / `bin\qaq-web.cmd`）
+
+可见 CMD 窗口里的中文菜单：
+
+```
+[1] 一键启动守卫（接管 dsh web）    — 每次启动前重新自检（fresh preflight）
+[2] 查看状态                        — 计数 / 上次成功 / 最近快照
+[3] 手动备份当前配置为 last-good
+[4] 手动回滚到 last-good
+[5] 重置失败计数
+[6] 自动挂载 dsh-qaq 备份插件        — 幂等、失败即撤销（绝不弄坏一次启动）
+[7] 查看日志（error / access / host）
+[q] 退出
+```
+
+受监督的 `dsh web` 运行期间，守卫锁会一直持有到它退出（期间拒绝二次启动，也不会被过期的端口检查误导）；Ctrl+C 会先杀掉受监督子进程，避免进程残留占住端口。
+
+## 操作指南
+
+### 首次配置（Windows）
+
+1. **安装** — 双击 `bin\qaq-install.cmd`。它会检查 Node.js >= 22、安装依赖（pnpm，失败时回退 npx）、并构建 `dist/qaq.mjs`。
+2. **挂载备份插件（推荐）** — 运行 `bin\qaq-web.cmd`，选 **[6] 自动挂载 dsh-qaq 备份插件**。它把 `dsh-qaq` 加进 profile 的 bundle 列表，并在 profile 的 `node_modules` 里建好模块链接。此后每次干净启动、host 稳定后，插件会自动把配置快照到 `~/.dsh/.qaq`（仅备份，绝不改 DSH 行为）。profile 自己的 `cordis.patch.yml` 故意不动——DSH 会从 bundle 声明自动加载插件的 patch 层。
+3. **启动** — 选 **[1] 一键启动守卫**。控制台会重新做启动前自检（dsh 命令、浏览器、端口），然后接管 `dsh web`。UI 稳定通过确认窗口后，配置被记为 last-good，守卫转入后台持续监控（随时可回车回菜单，守卫继续运行）。
+4. **验证** — 选 **[2] 查看状态**（或命令行 `qaq status`）：`hostFailures` / `uiFailures` 应为 0，且存在 `lastSuccess` / `lastGoodSnapshot`。
+
+### 日常使用
+
+- 每次都用同一方式启动 DSH：`bin\qaq-web.cmd` → **[1]**。之后尽量不要再直接跑 `dsh web`——守卫是唯一能发现红屏的监督者。
+- 若 UI 连续红屏（或宿主崩溃）**3 次**，QAQ 会给出回滚确认（带 diff 预览）。接受即可——坏配置会保留在 `~/.dsh/.qaq/rolled-back/` 供事后检查，守卫会自动重启一次。
+- 回滚 + 重启成功后，失败计数清零、防死循环栅栏解除；恢复的配置就是坏掉之前的那份。
+
+### 故障排查
+
+| 现象 | 处理方法 |
+|------|----------|
+| `启动前自检未通过`（找不到 dsh） | 把 `dsh` 加进 `PATH`、设置 `QAQ_DSH_CMD`，或用 `--cwd <dir>` 指向 DSH 源码目录 |
+| `端口已被占用` | 停掉占用进程，或用 `--port N` 换端口 |
+| 回滚后 UI 仍然红屏 | 看日志与保留的坏配置：`qaq console` → **[7]**，或直接读 `~/.dsh/.qaq/log/`（`error.log` / `access.log` / `host.log`） |
+| 提示 `anti-loop fence is active` | 5 分钟内已发生过回滚。先手动修复配置（见 `rolled-back/`），再 `qaq reset --profile web` 清计数 |
+| 想撤销一次回滚 | `qaq restore --to <snapDir> --profile web`，`snapDir` 用 `~/.dsh/.qaq/history/`（或 `rolled-back/`）下任意目录 |
+| dsh-qaq 不写快照 | 插件只在**干净启动、host 稳定**时写，失败启动不写。确认它在 profile bundles 里（`qaq console` → **[2]** 能看到最近快照），且 `install-plugin` 报成功 |
+
+### 数据位置
+
+- 守卫状态、快照、日志：`~/.dsh/.qaq/`（或 `$DSH_HOME/.qaq/`）
+- profile 配置：`$DSH_HOME/profiles/<name>/`（`package.json` + `cordis.patch.yml`）
+- `qaq status` 会打印你环境下的确切路径。
 
 ## `qaq dsh web` 调优参数
 
@@ -73,9 +130,20 @@ qaq dsh web --port 3080 --yes
 - `latest-good/` — 当前「确认成功」的 profile 配置副本（package.json + cordis.patch.yml + manifest）
 - `history/<ts>/` — 最近 5 份时间戳历史快照
 - `rolled-back/<ts>/` — 被执行回滚的坏配置（手动还原用）
-- `log/qaq.log`
+- `log/` — 结构化多文件日志（见下）
 
 **绝不纳入快照**：凭据、会话、storages、mcp-servers。
+
+## 日志（供开发者检修）
+
+每条记录一行 JSON（`{ ts, level, cat, phase?, msg, ...meta }`），可机器解析；按 `log/` 下四个文件分门别类，各自按大小轮转（256 KB → `.1.log`，保留 5 份）：
+
+| 文件 | 内容 |
+|------|------|
+| `qaq.log` | 全部（info + warn + error），主记录 |
+| `error.log` | 仅 warn/error——快速 grep 问题 |
+| `access.log` | 崩溃审计轨迹：启动结论、快照、回滚、重置、插件挂载、手动还原 |
+| `host.log` | 被监督 `dsh` 的原始 stdout/stderr（同时镜像到可见窗口） |
 
 ## 触发与防死循环
 
@@ -96,7 +164,7 @@ qaq dsh web --port 3080 --yes
 ## 测试
 
 ```bash
-pnpm test      # vitest 单元测试（store / rollback / detector-ui 判据）
+pnpm test      # vitest 单元测试（store / rollback / detector-ui / guard / spawn-dsh / env / install-plugin / log）
 pnpm smoke     # 一键回归：单测 + 隔离 home 种子/破坏/守卫检测
 ```
 
@@ -115,9 +183,12 @@ src/
   detector-ui.ts    L3 文本判据
   store.ts          ~/.dsh/.qaq 原子读写 + 快照管理 + 锁
   rollback.ts       回滚 + 坏版备份 + 防死循环 + 成功记账
-  paths.ts / log.ts
+  env.ts            环境自动发现 + 启动前自检（dsh / 浏览器 / 端口）
+  console.ts        交互式菜单 GUI（傻瓜式，CMD 窗口）
+  install-plugin.ts 自动挂载 dsh-qaq 备份插件（失败即撤销，绝不弄坏启动）
+  paths.ts / log.ts （log.ts：结构化多文件轮转日志）
 packages/dsh-qaq/  DSH 备份插件（host boot settle 后写快照，仅备份不改行为）
-bin/               qaq / qaq-web.cmd 启动入口
+bin/               qaq / qaq-web.cmd / qaq-install.cmd 启动入口
 tools/  test/  docs/
 ```
 

@@ -31,7 +31,7 @@ import { superviseBoot } from '../src/guard.ts'
 let home = ''
 function mkSupervisor() {
   return {
-    child: { exitCode: null },
+    child: { exitCode: null as number | null },
     ready: Promise.resolve(true),
     exit: Promise.resolve(null),
     output: () => '',
@@ -61,8 +61,44 @@ describe('guard.bootAttempt leak regression', () => {
     expect(v.ok).toBe(false)
     if (!v.ok) {
       expect(v.failureKind).toBe('unknown')
+      // With retries=0 the single attempt is by definition the exhausted one.
+      expect(v.retriesExhausted).toBe(true)
       // The child must be killed — leaking it held the port on retry and hung the guard.
       expect(killMock).toHaveBeenCalled()
+    }
+  })
+
+  it('classifies a host that crashes after binding the port as host, not unknown', async () => {
+    // The child bound the port (ready resolved) but then died with a fail-loud
+    // marker before the UI settled — the real "crashed after bind" shape.
+    const sup = mkSupervisor()
+    sup.child = { exitCode: 1 }
+    sup.hasHostFailureMarker = () => true
+    spawnDshMock.mockReturnValue(sup)
+    detectUiMock.mockResolvedValue({ ok: false, kind: 'loading', bodyText: 'HARNESS Loading…' })
+
+    const v = await superviseBoot({ home, command: ['fake'], cwd: '.', profile: 'web', retries: 0, uiTimeoutMs: 50, confirmGoodMs: 0 })
+
+    expect(v.ok).toBe(false)
+    if (!v.ok) {
+      // A crashed host must be counted (hostFailures + rollback eligibility),
+      // never dropped as an uncounted 'unknown' UI timeout.
+      expect(v.failureKind).toBe('host')
+    }
+  })
+
+  it('does not mark retriesExhausted when a genuine (non-transient) failure stops the loop early', async () => {
+    spawnDshMock.mockReturnValue(mkSupervisor())
+    detectUiMock.mockResolvedValue({ ok: false, kind: 'failed', bodyText: 'Failed to load plugins', failureDetail: 'web boot: 1 entry did not activate dsh-x: pending (waiting for service: y)' })
+
+    const v = await superviseBoot({ home, command: ['fake'], cwd: '.', profile: 'web', retries: 1, uiTimeoutMs: 100, confirmGoodMs: 0 })
+
+    expect(v.ok).toBe(false)
+    if (!v.ok) {
+      expect(v.failureKind).toBe('ui')
+      // A red screen is not transient: no tolerance retry ran, so retries are NOT exhausted.
+      expect(v.retriesExhausted).toBe(false)
+      expect(killMock).toHaveBeenCalledTimes(1)
     }
   })
 

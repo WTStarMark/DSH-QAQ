@@ -101,7 +101,10 @@ export async function maybeRollback(ctx: RollbackContext): Promise<RollbackOutco
 
   // Anti-loop fence.
   const now = Date.now()
-  if (prof.rolledBackAt && now - Date.parse(prof.rolledBackAt) < ANTI_LOOP_MS) {
+  const rbTs = prof.rolledBackAt ? Date.parse(prof.rolledBackAt) : NaN
+  // A malformed rolledBackAt (Date.parse -> NaN) must not silently disable the
+  // fence: treat it as no-fence and let the operator repair state.json.
+  if (prof.rolledBackAt && !Number.isNaN(rbTs) && now - rbTs < ANTI_LOOP_MS) {
     ctx.log.warn(ctx.profile + ': rollback threshold reached but anti-loop fence is active (last rollback ' + prof.rolledBackAt + '). Stopping; start clean after fixing config manually.')
     return { triggered: false, snappedGood: false, restored: false, badBackedUp: false }
   }
@@ -161,6 +164,7 @@ export async function maybeRollback(ctx: RollbackContext): Promise<RollbackOutco
   await restoreSnapshot(ctx.home, ctx.profile, good)
   prof.rolledBackAt = new Date(now).toISOString()
   writeState(ctx.home, state)
+  ctx.log.access('rolled back ' + ctx.profile + ' to last-good; bad config saved to ' + rolledBackDir, { kind: ctx.kind, action: 'rollback', rolledBackDir })
   ctx.log.warn('rolled back ' + ctx.profile + ' to last-good; bad config saved to ' + rolledBackDir)
   return { triggered: true, snappedGood: true, restored: true, badBackedUp: true, rolledBackDir }
 }
@@ -201,6 +205,7 @@ export function recordSuccess(home: string, profile: string, log: Logger, packag
   // record lastGoodSnapshot path in state
   state.profiles[profile].lastGoodSnapshot = 'history/' + ts
   writeState(home, state)
+  log.access('recorded success and snapshot for profile ' + profile, { profile, ts, snapshots: 'latest-good + history/' + ts })
   log.info('recorded success and snapshot for profile ' + profile)
 }
 
@@ -213,5 +218,6 @@ export function manualBackup(home: string, profile: string, log: Logger): void {
 /** Manual restore from a snapshot dir. */
 export function manualRestore(home: string, profile: string, snapDir: string, log: Logger): void {
   restoreSnapshot(home, profile, snapDir)
+  log.access('manually restored profile ' + profile + ' from ' + snapDir, { profile, action: 'restore', snapDir })
   log.warn('restored profile ' + profile + ' from ' + snapDir)
 }
