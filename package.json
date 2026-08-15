@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "license": "MIT",
+  "author": "WTStarMark",
   "engines": {
     "node": ">=22.19.0"
   },
