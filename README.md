@@ -1,110 +1,123 @@
-# QAQ — DeepSeek Harness 启动容灾守卫
+# QAQ — DeepSeek Harness Launch Resilience Guard
 
-当 profile 配置损坏导致 DeepSeek Harness（下称 DSH）无法正常启动（宿主崩溃 **或** Web UI 红屏）时，QAQ 自动回溯到「上一次成功启动」的配置快照并重启，同时保留被回退的坏配置便于手动还原。
+[中文说明](./README.zh-CN.md)
 
-**不侵入 DSH 源码**：守卫是独立可执行，只通过 spawn 进程 + CDP 读浏览器真实 DOM；备份插件只读配置不改行为。
+QAQ is a **launch resilience guard** for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH). When a disrupted profile configuration prevents DSH from starting normally — a crashed host **or** a red-screened Web UI — QAQ automatically restores the configuration snapshot from the last successful boot and restarts, while preserving the broken config for manual recovery.
 
-## 它解决什么
+**Non-invasive**: QAQ never edits DSH source. The guard is a standalone executable that supervises the `dsh web` process and reads the browser's real DOM over CDP; the backup plugin only reads configuration and never changes behavior.
 
-DSH Web 存在一种「宿主活、UI 红屏」的失败模式，宿主进程正常、端口可达，但浏览器渲染出 Failed to load plugins。这类失败纯监听宿主进程抓不到、纯 curl 抓空 root 也测不到，唯一可靠手段是用 headless Chrome 通过 CDP 读真实 DOM。QAQ 的 UI 侦测线正是这么做。
+## What it solves
 
-## 安装 / 快速上手
+DSH's Web surface has a failure mode where the **host is alive but the UI red-screens**: the host process runs, the port responds, yet the browser renders `Failed to load plugins`. Such failures are invisible to host-process monitoring and cannot be detected by `curl` (the server-side HTML ships an empty `<div id="root">`, rendered client-side). The only reliable non-invasive probe is to open the page in a headless browser and read the actual DOM. QAQ's UI-detection line is exactly that.
 
-环境：Node >= 22。本仓库即项目根（与 DSH 安装/克隆相互独立）。
+## Requirements
 
-    pnpm install
-    pnpm build          # 产出 dist/qaq.mjs 单文件可执行
+- Node.js >= 22
+- A Chrome/Chromium/Edge binary on the machine (used headlessly via CDP; no Playwright/Puppeteer dependency)
+- The `dsh` command on `PATH`, or an explicit `QAQ_DSH_CMD` / `--cwd`
 
-从可见 CMD 窗口接管 dsh web：
+## Install / Quick start
 
-    bin\qaq-web.cmd [--port 3080] [--yes]
+```bash
+pnpm install
+pnpm build   # emits a single-file executable at dist/qaq.mjs
+```
 
-或直接：
+Take over `dsh web` from a visible CMD window:
 
-    qaq dsh web --port 3080 --yes
+```cmd
+bin\qaq-web.cmd [--port 3080] [--yes]
+```
 
-> 用哪个 dsh 启动？守卫默认执行 dsh web（PATH 解析）。指定自定义启动命令：
->     QAQ_DSH_CMD="node --import tsx/esm apps/cli/src/bin.ts web" qaq dsh web
+or directly:
 
-## 命令面
+```bash
+qaq dsh web --port 3080 --yes
+```
 
-| 命令 | 作用 |
-|------|------|
-| qaq dsh web [--port N] [--yes] | 接管启动：侦测 host/UI 失败 -> 计数 -> 触发时回滚 -> 重启（带防死循环） |
-| qaq status | 显示 ~/.dsh/.qaq/state.json 摘要 |
-| qaq backup [--profile web] | 手动快照当前 profile 为 last-good |
-| qaq restore --to <snapDir> [--profile web] | 手动从某快照还原 profile |
-| qaq reset --profile web | 清零失败计数 |
+> **Which `dsh` runs?** The guard defaults to `dsh web` (`PATH` resolution). To run from the DSH source tree instead:
+> ```bash
+> QAQ_DSH_CMD="node --import tsx/esm apps/cli/src/bin.ts web" qaq dsh web --cwd /path/to/dsh-checkout
+> ```
 
-## 侦测判据（L3，实证）
+## Commands
 
-- UI 失败：document.body.innerText 含固定文本 Failed to load plugins（稳定跨版本）；异常详情直接给出缺失插件/服务。
-- 成功：出现 composer 业务容器（textarea）且无红屏文本，稳定 >= 20s。
-- 不使用 CSS 类选择器：红屏结构类是 CSS Modules 哈希（跨构建不稳定）。
+| Command | Purpose |
+|---------|---------|
+| `qaq dsh web [--port N] [--yes]` | supervised startup: detect host/UI failure -> count -> roll back when triggered -> restart (with anti-loop) |
+| `qaq status` | print a summary of `~/.dsh/.qaq/state.json` |
+| `qaq backup [--profile web]` | snapshot the current profile as last-good |
+| `qaq restore --to <snapDir> [--profile web]` | restore a profile from a snapshot directory |
+| `qaq reset --profile web` | zero the failure counters |
 
-## 状态与存储（~/.dsh/.qaq/）
+Global: `--yes` auto-confirms rollbacks.
 
-- state.json：hostFailures / uiFailures / lastSuccess / lastFailure / lastGoodSnapshot / rolledBackAt
-- latest-good/：当前「确认成功」的 profile 配置副本（package.json + cordis.patch.yml + manifest）
-- history/<ts>/：最近 5 份历史快照
-- rolled-back/<ts>/：被执行回滚的坏配置（手动还原用）
-- log/qaq.log
+## Supervised `dsh web` options
 
-**绝不纳入快照**：凭据、会话、storages、mcp-servers。
+| Option | Meaning | Default |
+|--------|---------|---------|
+| `--confirm-ms <ms>` | stable-healthy confirmation window before snapshotting | `20000` |
+| `--ui-timeout <ms>` | max wait for the UI to settle during the L3 probe | `25000` |
+| `--threshold <n>` | consecutive same-kind failures that trigger a rollback | `3` |
+| `--cwd <dir>` | working directory for the supervised `dsh` (set to the checkout for source launch) | process cwd |
 
-## 触发与防死循环
+## Detection criteria (L3, empirically verified)
 
-- 连续 3 次同类（host 或 ui）失败 -> 触发回滚。
-- 默认需用户在窗口确认（Y/N），--yes 全自动。
-- 回滚后进入 5 分钟防死循环栅栏：窗口内再次失败即停手，指引人工检查 rolled-back/。
+- **UI failure**: `document.body.innerText` contains the pinned text `Failed to load plugins` (stable across builds). The failure detail even names the missing plugin/service (e.g. `web boot: 1 entry did not activate dsh-x: pending (waiting for service: s)`).
+- **Success**: a composer business container (`<textarea>`) is present and the failure marker is absent, stable for >= `--confirm-ms`.
+- **No CSS class selectors**: the red-screen structural classes are CSS-Module hashes (`_boot_<hash>`) that change between builds.
 
-## 里程碑对照
+## State & storage (`~/.dsh/.qaq/`)
 
-| 里程碑 | 状态 |
-|--------|------|
-| M1 仓库初始化 + 接管 spawn | 完成 |
-| M2 host 失败侦测 + state 计数 | 完成 |
-| M3 L3 CDP 文本侦测 | 完成（复现红屏样本实测） |
-| M4 成功快照 + 成功判定 | 完成 |
-| M5 回滚 + 坏版备份 + 确认 + 防死循环 | 完成（端到端闭环实测） |
-| M6 命令面 + 日志 + 测试 | 完成（vitest 17 通过） |
+- `state.json` — `hostFailures`, `uiFailures`, `lastSuccess`, `lastFailure`, `lastGoodSnapshot`, `rolledBackAt`
+- `latest-good/` — the last confirmed-good profile config (`package.json` + `cordis.patch.yml` + `manifest.json`)
+- `history/<ts>/` — up to 5 timestamped historical snapshots
+- `rolled-back/<ts>/` — the broken config saved before a rollback (for manual recovery)
+- `log/qaq.log`
 
-## 测试
+**Never snapshotted**: credentials, sessions, storages, mcp-servers.
 
-    pnpm test        # vitest 单元测试（store / rollback / detector-ui 判据）
-    pnpm smoke       # 一键回归：单测 + 隔离 home 种子/破坏/守卫检测
+## Trigger & anti-loop
 
-集成验收素材：qaq-test-plugins/dsh-broken-theme（注入永不存在的服务 -> 确定性红屏），配合 tools/rollback-test.ps1 可在完整 DSH 实例上跑通「失败->计数->回滚->还原」闭环。
+- **3** consecutive failures of the same kind (host or UI) trigger a rollback.
+- Confirmation is required by default (`Y/N`); `--yes` makes it fully automatic.
+- After a rollback a **5-minute anti-loop fence** stops repeated auto-restarts if the restart still fails; the user is pointed at `rolled-back/`.
 
-## 开发布局
+## Reliability features
 
-    src/
-      cli.ts            命令面 + 接管循环
-      guard.ts          superviseBoot 编排（host 就绪 -> UI 侦测 -> 计数/回滚）
-      spawn-dsh.ts      spawn dsh web、继承 env、就绪/退出监听
-      cdp.ts            极简 CDP 客户端（headless Chrome，无 Playwright）
-      detector-ui.ts    L3 文本判据
-      store.ts          ~/.dsh/.qaq 原子读写 + 快照管理 + 锁
-      rollback.ts       回滚 + 坏版备份 + 防死循环 + 成功记账
-      paths.ts / log.ts
-    packages/dsh-qaq/   DSH 备份插件（boot settle 后写快照，仅备份不改行为）
-    tools/  bin/  test/
+- **Transient-failure retry** (`retries=1`): suspected one-off flakes (host not ready, a client bundle that transiently fails to load) are retried once and not counted, so a Windows EBUSY does not corrupt the strike counter.
+- **PID-aware guard lock**: a stale lock left by a crashed guard is auto-reclaimed on the next run.
+- **Rollback diff preview**: prints the config diff (current vs. last-good) before `Y/N`.
+- **Deterministic history retention**: snapshots sort by their ISO-timestamp names, stable across restarts.
 
-## 调优参数（qaq dsh web）
+## Testing
 
-- `--confirm-ms <ms>` 稳定健康确认窗口（默认 20000）
-- `--ui-timeout <ms>` L3 UI 侦测最长等待（默认 25000）
-- `--threshold <n>` 触发回滚的连续同类失败数（默认 3）
-- `--cwd <dir>` 被监督 `dsh` 的工作目录（源码启动时指向 DSH checkout）
+```bash
+pnpm test      # vitest unit tests (store / rollback / detector-ui criteria)
+pnpm smoke     # one-shot regression: unit tests + seed/broken/detect in an isolated home
+```
 
-## 可靠性增强
+`pnpm smoke` performs a real-DSH integration segment only when a checkout is available (set `QAQ_SMOKE_DSH_HOME`).
 
-- **瞬态失败重试**：一次 boot 前有 `retries=1`，对疑似瞬时错误（host 未就绪 / bundle 脚本加载失败）自动重试一次，不直接计入失败，避免 Windows 偶发 EBUSY 误伤计数。
-- **PID 感知守卫锁**：锁文件记录 pid，崩溃残留的陈旧锁在下一次运行会被自动回收，避免「假占用」。
-- **回滚 diff 预览**：Y/N 确认前打印当前配置与 last-good 的字段差异。
-- **历史保留确定性**：快照按 ISO 时间戳名字排序，跨重启保留稳定。
+Integration fixture: `qaq-test-plugins/dsh-broken-theme` (injects a service that never arrives -> deterministic red screen), used with `tools/rollback-test.ps1` to exercise the full fail->count->rollback->recover loop on a real DSH instance.
 
-## 说明
+## Repository layout
 
-- 仓库与 DSH 解耦；守卫仅有 ws 一个运行时依赖，可 esbuild 打成单文件。
-- 设计依据与复现实验见 QAQ计划定案.md。
+```
+src/
+  cli.ts            command surface + supervised loop
+  guard.ts          superviseBoot orchestration (host ready -> UI detect -> count/rollback)
+  spawn-dsh.ts      spawn dsh web, inherit env, readiness/exit tracking
+  cdp.ts            minimal CDP client (headless Chrome, no Playwright)
+  detector-ui.ts    L3 text criteria
+  store.ts          atomic ~/.dsh/.qaq read/write + snapshot management + lock
+  rollback.ts       rollback + broken-config backup + anti-loop + success bookkeeping
+  paths.ts / log.ts
+packages/dsh-qaq/  DSH backup plugin (snapshots after host boot settles; backup-only)
+bin/               qaq / qaq-web.cmd launchers
+tools/  test/  docs/
+```
+
+## License
+
+MIT
