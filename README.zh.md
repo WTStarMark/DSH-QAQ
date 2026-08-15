@@ -218,7 +218,7 @@ CI（`.github/workflows/ci.yml`）在 **ubuntu-latest** 与 **windows-latest**�
 
 欢迎一切形式的贡献——Bug 报告、功能建议与 Pull Request 都能让 QAQ 变得更好。
 
-**报 Bug / 提需求**：在 [Issues](https://github.com/<你的账户>/QAQ/issues) 提交，附上复现步骤（`~/.dsh/.qaq/log/access.log` 与 `error.log` 的关键片段最有帮助）和你的环境（操作系统、Node 版本）。
+**报 Bug / 提需求**：在 [Issues](https://github.com/WTStarMark/QAQ/issues) 提交，附上复现步骤（`~/.dsh/.qaq/log/access.log` 与 `error.log` 的关键片段最有帮助）和你的环境（操作系统、Node 版本）。
 
 **提交 Pull Request**：
 
