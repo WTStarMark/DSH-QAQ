@@ -175,6 +175,8 @@ pnpm smoke     # one-shot regression: unit tests + seed/broken/detect in an isol
 
 `pnpm smoke` performs a real-DSH integration segment only when a checkout is available (set `QAQ_SMOKE_DSH_HOME`).
 
+CI (`.github/workflows/ci.yml`) runs typecheck + build + unit tests + smoke on **ubuntu-latest** and **windows-latest** with Node 22 and a frozen lockfile.
+
 Integration fixture: `qaq-test-plugins/dsh-broken-theme` (injects a service that never arrives -> deterministic red screen), used with `tools/rollback-test.ps1` to exercise the full fail->count->rollback->recover loop on a real DSH instance.
 
 ## Repository layout

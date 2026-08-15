@@ -174,6 +174,8 @@ pnpm smoke     # 一键回归：单测 + 隔离 home 种子/破坏/守卫检测
 
 `pnpm smoke` 在可用 DSH checkout（`QAQ_SMOKE_DSH_HOME`）时才会执行真实 DSH 集成段。
 
+CI（`.github/workflows/ci.yml`）在 **ubuntu-latest** 与 **windows-latest**、Node 22、冻结 lockfile 下运行 typecheck + 构建 + 单测 + smoke。
+
 集成验收素材：`qaq-test-plugins/dsh-broken-theme`（注入永不存在的服务 -> 确定性红屏），配合 `tools/rollback-test.ps1` 可在真实 DSH 实例上跑通「失败 -> 计数 -> 回滚 -> 还原」闭环。
 
 ## 仓库布局
