@@ -32,6 +32,7 @@ function writeSnapshotHome(home: string, profileName: string, profileDir: string
   mkdirSync(join(root, 'latest-good'), { recursive: true })
   mkdirSync(join(root, 'history'), { recursive: true })
   const ts = newTimestamp()
+  mkdirSync(join(root, 'history', ts), { recursive: true })
   for (const f of FILES) {
     const src = join(profileDir, f)
     if (existsSync(src)) {
@@ -39,7 +40,6 @@ function writeSnapshotHome(home: string, profileName: string, profileDir: string
       copyFileSync(src, join(root, 'history', ts, f))
     }
   }
-  mkdirSync(join(root, 'history', ts), { recursive: true })
   writeFileSync(join(root, 'latest-good', 'manifest.json'), JSON.stringify({ profile: profileName, ts: new Date().toISOString() }, null, 2), 'utf8')
   prune(join(root, 'history'), KEEP)
 }
@@ -50,7 +50,7 @@ function writeSnapshotHome(home: string, profileName: string, profileDir: string
  */
 export function apply(ctx: Context): void {
   const home = resolveDshHome()
-  const profileName = inferProfileName(ctx) ?? 'web'
+  const profileName = process.env.QAQ_PROFILE ?? inferProfileName(ctx) ?? 'web'
   const profileDir = join(home, 'profiles', profileName)
   const settle = ctx.get('loader')?.await?.()
   if (settle === undefined) {

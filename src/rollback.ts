@@ -45,6 +45,27 @@ export function isInAntiLoop(windowMs = ANTI_LOOP_MS): (profile: { rolledBackAt?
   }
 }
 
+/** A minimal line-based diff: mark lines that differ between current and target (simple LCS). */
+export function diffConfig(currentText: string, targetText: string, label = 'config'): string {
+  const a = currentText.split('\n')
+  const b = targetText.split('\n')
+  // LCS to align lines.
+  const n = a.length, m = b.length
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0))
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+  const out: string[] = []
+  let i = 0, j = 0
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { out.push('   ' + a[i]); i++; j++ }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push('-  ' + a[i]); i++ }
+    else { out.push('+  ' + b[j]); j++ }
+  }
+  while (i < n) { out.push('-  ' + a[i]); i++ }
+  while (j < m) { out.push('+  ' + b[j]); j++ }
+  return (label + ' diff (current -> last-good):\n' + out.join('\n')).slice(0, 4000)
+}
+
 /** The user-console confirmation prompt (Y/N). */
 async function defaultConfirm(): Promise<boolean> {
   process.stdout.write('[qaq] Roll back profile to last-good config? (y/N) ')
@@ -114,9 +135,18 @@ export async function maybeRollback(ctx: RollbackContext): Promise<RollbackOutco
   if (existsSync(cp)) copyFileSync(cp, join(rolledBackDir, 'cordis.patch.yml'))
   writeFileQuiet(join(rolledBackDir, 'manifest.json'), JSON.stringify({ profile: ctx.profile, ts: new Date().toISOString(), note: 'bad config preserved before rollback' }, null, 2))
 
-  // Confirmation.
+  // Confirmation (with a diff preview of what the rollback will change).
   let proceed = true
   if (!ctx.autoConfirm) {
+    // Show what would change before asking.
+    try {
+      const pr = profileDir(ctx.home, ctx.profile)
+      for (const f of ['package.json', 'cordis.patch.yml'] as const) {
+        const cur = existsSync(join(pr, f)) ? readFileSync(join(pr, f), 'utf8') : ''
+        const tgt = existsSync(join(good, f)) ? readFileSync(join(good, f), 'utf8') : ''
+        if (cur !== tgt) process.stdout.write(diffConfig(cur, tgt, f))
+      }
+    } catch { /* diff is best-effort; still prompt */ }
     const confirm = ctx.confirmYes ?? defaultConfirm
     proceed = await confirm()
   }

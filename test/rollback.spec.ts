@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import {
   readState, writeState, emptyState, profileState, writeSnapshot,
 } from '../src/store.ts'
-import { maybeRollback, recordSuccess, manualBackup, DEFAULT_THRESHOLD, isUsable } from '../src/rollback.ts'
+import { maybeRollback, recordSuccess, manualBackup, DEFAULT_THRESHOLD, isUsable, diffConfig } from '../src/rollback.ts'
 import { qaqDir, profileDir } from '../src/paths.ts'
 import { Logger } from '../src/log.ts'
 
@@ -22,6 +22,16 @@ function setupProfile(name = 'web', pkgJson = '{"name":"p"}', patch = '[]'): voi
 }
 
 describe('rollback', () => {
+  it('diffConfig marks changed lines', () => {
+    const cur = 'line-a\nkeep\nold-line'
+    const tgt = 'line-a\nkeep\nnew-line'
+    const d = diffConfig(cur, tgt, 'package.json')
+    expect(d).toContain('package.json diff')
+    expect(d).toContain('-  old-line')
+    expect(d).toContain('+  new-line')
+    expect(d).toContain('   keep')
+  })
+
   it('does not roll back below the threshold', async () => {
     setupProfile()
     const s = readState(home); const p = profileState(s, 'web'); p.uiFailures = 2

@@ -21,18 +21,27 @@ interface CliArgs {
   port?: number
   yes: boolean
   restoreTo?: string
+  confirmMs?: number
+  uiTimeoutMs?: number
+  threshold?: number
+  cwd?: string
 }
 
 const USAGE = `
 qaq — DeepSeek Harness launch resilience guard
 Usage:
-  qaq dsh web [--port N] [--yes]            supervise 'dsh web' (host/UI detect, rollback, restart)
+  qaq dsh web [--port N] [--yes] [opts]     supervise 'dsh web' (host/UI detect, rollback, restart)
   qaq status                                show the guard state
   qaq backup [--profile <name>]            snapshot the current profile as last-good
   qaq restore --to <snapDir> [--profile <name>]  restore a profile from a snapshot dir
   qaq reset --profile <name>               zero the failure counters
 Globals:
   --yes                                     auto-confirm rollbacks
+dsh web options:
+  --confirm-ms <ms>    stable-healthy confirmation window before snapshot (default 20000)
+  --ui-timeout <ms>    max wait for the UI to settle during the L3 probe (default 25000)
+  --threshold <n>      consecutive failures that trigger a rollback (default 3)
+  --cwd <dir>          working directory for the supervised dsh (default: this process cwd)
 `
 
 function parseCli(argv: string[]): CliArgs {
@@ -40,16 +49,21 @@ function parseCli(argv: string[]): CliArgs {
   const rest = argv.filter(a => a !== '--yes')
   const first = rest[0]
   const val = (flag: string): string | undefined => { const i = rest.indexOf(flag); return i >= 0 ? rest[i + 1] : undefined }
-  const portStr = val('--port')
-  const port = portStr !== undefined ? Number(portStr) : undefined
+  const num = (flag: string): number | undefined => { const s = val(flag); return s !== undefined && /^\d+$/.test(s) ? Number(s) : undefined }
+  const port = num('--port')
+  const confirmMs = num('--confirm-ms')
+  const uiTimeoutMs = num('--ui-timeout')
+  const threshold = num('--threshold')
+  const cwd = val('--cwd')
 
-  if (first === 'status') return { mode: 'status', profile: val('--profile') ?? 'web', yes, port }
-  if (first === 'backup') return { mode: 'backup', profile: val('--profile') ?? 'web', yes, port }
-  if (first === 'restore') return { mode: 'restore', profile: val('--profile') ?? 'web', yes, restoreTo: val('--to') }
-  if (first === 'reset') return { mode: 'reset', profile: val('--profile') ?? 'web', yes, port }
-  if (first === 'help' || first === '-h' || first === '--help') return { mode: 'help', profile: 'web', yes, port }
+  const base = { yes, port, confirmMs, uiTimeoutMs, threshold, cwd }
+  if (first === 'status') return { mode: 'status', profile: val('--profile') ?? 'web', ...base }
+  if (first === 'backup') return { mode: 'backup', profile: val('--profile') ?? 'web', ...base }
+  if (first === 'restore') return { mode: 'restore', profile: val('--profile') ?? 'web', restoreTo: val('--to'), ...base }
+  if (first === 'reset') return { mode: 'reset', profile: val('--profile') ?? 'web', ...base }
+  if (first === 'help' || first === '-h' || first === '--help') return { mode: 'help', profile: 'web', ...base }
   // 'dsh', 'web', or bare => dsh supervision.
-  return { mode: 'dsh', profile: 'web', yes, port }
+  return { mode: 'dsh', profile: 'web', ...base }
 }
 
 async function main(): Promise<void> {
@@ -111,8 +125,12 @@ async function cmdDsh(args: CliArgs): Promise<void> {
   const dshEnv: Record<string, string | undefined> = {}
 
   const guardOpts: GuardOptions = {
-    home, profile: args.profile, command, cwd: process.cwd(), port,
+    home, profile: args.profile, command, cwd: args.cwd ?? process.cwd(), port,
     dshEnv, autoConfirm: args.yes,
+    retries: 1,
+    confirmGoodMs: args.confirmMs,
+    uiTimeoutMs: args.uiTimeoutMs,
+    threshold: args.threshold,
   }
 
   try {

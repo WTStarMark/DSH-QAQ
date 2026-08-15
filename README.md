@@ -62,16 +62,17 @@ DSH Web 存在一种「宿主活、UI 红屏」的失败模式，宿主进程正
 
 | 里程碑 | 状态 |
 |--------|------|
-| M1 仓库初始化 + 接管 spawn | ok |
-| M2 host 失败侦测 + state 计数 | ok |
-| M3 L3 CDP 文本侦测 | ok（复现红屏样本实测） |
-| M4 成功快照 + 成功判定 | ok |
-| M5 回滚 + 坏版备份 + 确认 + 防死循环 | ok |
-| M6 命令面 + 日志 + 测试 | ok（vitest 16 通过） |
+| M1 仓库初始化 + 接管 spawn | 完成 |
+| M2 host 失败侦测 + state 计数 | 完成 |
+| M3 L3 CDP 文本侦测 | 完成（复现红屏样本实测） |
+| M4 成功快照 + 成功判定 | 完成 |
+| M5 回滚 + 坏版备份 + 确认 + 防死循环 | 完成（端到端闭环实测） |
+| M6 命令面 + 日志 + 测试 | 完成（vitest 17 通过） |
 
 ## 测试
 
     pnpm test        # vitest 单元测试（store / rollback / detector-ui 判据）
+    pnpm smoke       # 一键回归：单测 + 隔离 home 种子/破坏/守卫检测
 
 集成验收素材：qaq-test-plugins/dsh-broken-theme（注入永不存在的服务 -> 确定性红屏），配合 tools/rollback-test.ps1 可在完整 DSH 实例上跑通「失败->计数->回滚->还原」闭环。
 
@@ -88,6 +89,20 @@ DSH Web 存在一种「宿主活、UI 红屏」的失败模式，宿主进程正
       paths.ts / log.ts
     packages/dsh-qaq/   DSH 备份插件（boot settle 后写快照，仅备份不改行为）
     tools/  bin/  test/
+
+## 调优参数（qaq dsh web）
+
+- `--confirm-ms <ms>` 稳定健康确认窗口（默认 20000）
+- `--ui-timeout <ms>` L3 UI 侦测最长等待（默认 25000）
+- `--threshold <n>` 触发回滚的连续同类失败数（默认 3）
+- `--cwd <dir>` 被监督 `dsh` 的工作目录（源码启动时指向 DSH checkout）
+
+## 可靠性增强
+
+- **瞬态失败重试**：一次 boot 前有 `retries=1`，对疑似瞬时错误（host 未就绪 / bundle 脚本加载失败）自动重试一次，不直接计入失败，避免 Windows 偶发 EBUSY 误伤计数。
+- **PID 感知守卫锁**：锁文件记录 pid，崩溃残留的陈旧锁在下一次运行会被自动回收，避免「假占用」。
+- **回滚 diff 预览**：Y/N 确认前打印当前配置与 last-good 的字段差异。
+- **历史保留确定性**：快照按 ISO 时间戳名字排序，跨重启保留稳定。
 
 ## 说明
 

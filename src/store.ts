@@ -3,7 +3,7 @@
  * simple cross-process advisory lock. All writes are atomic (temp file + rename)
  * so a crash never leaves a half-written state or snapshot.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, readdirSync, existsSync, rmSync, statSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync, copyFileSync, readdirSync, existsSync, rmSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { qaqDir, profileDir } from './paths.ts'
 
@@ -48,17 +48,42 @@ export function ensureQaqDir(home: string): string {
   return dir
 }
 
-/** A best-effort advisory lock directory used to serialize two guard instances. */
-function lockDir(home: string): string { return join(qaqDir(home), '.guard.lock') }
+/** A PID-aware advisory lock file used to serialize two guard instances. */
+function lockPath(home: string): string { return join(qaqDir(home), '.guard.lock') }
 
-/** Acquire the guard lock (exclusive). Returns a release function; rejects if held. */
+/**
+ * Acquire the guard lock (exclusive). A lock whose recorded PID is not alive is
+ * treated as stale and reclaimed, so a crashed guard does not permanently block
+ * the next run.
+ * @returns a release function.
+ * @throws if another live guard instance holds the lock.
+ */
 export function acquireLock(home: string): () => void {
-  const ld = lockDir(home)
-  if (existsSync(ld)) {
-    throw new Error('another qaq guard instance is already running (lock held); stop it or remove ' + ld)
+  const lp = lockPath(home)
+  try {
+    if (existsSync(lp)) {
+      const raw = readFileSync(lp, 'utf8')
+      const pid = Number(raw.trim())
+      if (Number.isFinite(pid) && pid > 0 && isProcessAlive(pid)) {
+        throw new Error('another qaq guard instance (pid ' + pid + ') is already running; stop it, or remove ' + lp)
+      }
+      // stale lock: owner pid is not alive — reclaim.
+      try { rmSync(lp, { force: true }) } catch { /* best effort */ }
+    }
+  } catch (err) {
+    if (err instanceof Error && /another qaq guard/.test(err.message)) throw err
   }
-  mkdirSync(ld, { recursive: true })
-  return () => { try { rmSync(ld, { recursive: true, force: true }) } catch { /* best effort */ } }
+  writeFileSync(lp, String(process.pid), 'utf8')
+  return () => { try { rmSync(lp, { force: true }) } catch { /* best effort */ } }
+}
+
+/** Best-effort liveness check for a pid (Windows + POSIX). */
+function isProcessAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true } catch (err) {
+    // EPERM => alive but not ours; ESRCH => dead.
+    if ((err as NodeJS.ErrnoException).code === 'ESRCH') return false
+    return true
+  }
 }
 
 /** Default empty state. */
@@ -124,7 +149,8 @@ export function listSnapshots(home: string, sub: string): string[] {
   return readdirSync(base)
     .map(n => join(base, n))
     .filter(d => existsSync(join(d, 'manifest.json')))
-    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
+    // ISO timestamps sort lexicographically == chronologically; determinism across restart.
+    .sort((a, b) => (basename(b) < basename(a) ? -1 : basename(b) > basename(a) ? 1 : 0))
 }
 
 /** Prune history/ to at most `keep` newest snapshots. */

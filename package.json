@@ -16,6 +16,7 @@
     "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/qaq.mjs",
     "qaq": "tsx src/cli.ts",
     "test": "vitest run",
+    "smoke": "node tools/smoke.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

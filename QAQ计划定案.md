@@ -259,12 +259,12 @@ D:MochenProjectqaq├─ package.json / pnpm-workspace.yaml（若 monorepo）
 
 | 阶段 | 内容 | 验收 |
 |------|------|------|
-| M1 | 仓库初始化 + `qaq dsh web` 接管 spawn（可见 CMD，继承 env） | 手动 `qaq dsh web` 正常启动 DSH 且窗口可见 |
-| M2 | 宿主失败侦测 + `state.json` 计数 | 模拟宿主崩配置，`hostFailures`+1 |
-| M3 | **L3 CDP 文本侦测**（判据=`Failed to load plugins`） | 用 `dsh-broken-theme` 复现样本，`uiFailures`+1（素材已备） |
-| M4 | 备份插件写 `latest-good`；成功判定 | 正常启动生成 `latest-good/` |
-| M5 | 回滚 + 坏版备份 + 自动确认 + 防死循环 | 连续 3 次失败自动回滚重启；回滚后不再恶性循环 |
-| M6 | 手动命令面 + 日志 + 测试 | 全命令可用，关键路径有测试 |
+| M1 | 仓库初始化 + `qaq dsh web` 接管 spawn（可见 CMD，继承 env） | ✅ 已实现 |
+| M2 | 宿主失败侦测 + `state.json` 计数 | ✅ 已实现 |
+| M3 | **L3 CDP 文本侦测**（判据=`Failed to load plugins`） | ✅ 已实现且复现样本实测 |
+| M4 | 备份插件写 `latest-good`；成功判定 | ✅ 已实现（含 dsh-qaq 插件隔离联调） |
+| M5 | 回滚 + 坏版备份 + 自动确认 + 防死循环 | ✅ 已实现且端到端闭环实测 |
+| M6 | 手动命令面 + 日志 + 测试 | ✅ 已实现（vitest 17 通过） |
 
 ---
 
@@ -276,6 +276,12 @@ D:MochenProjectqaq├─ package.json / pnpm-workspace.yaml（若 monorepo）
 4. **自动确认默认值**：默认 require 用户确认，`--yes` 全自动。
 
 ---
+
+## 实现增补（实施期的 AC/B/C 优化）
+
+- A1 瞬态失败重试（retries=1，防 EBUSY 误伤）；A2 dsh-qaq 插件隔离 profile 真实联调通过。
+- B1 回滚 diff 预览；B2 CLI 调优参数（--confirm-ms/--ui-timeout/--threshold/--cwd）；B3 qaq-web.cmd 可见窗口验证。
+- C1 死代码清理；C2 history 按 ISO 时间戳确定性保留；C3 `pnpm smoke` 一键回归；C4 文档同步。
 
 ## 附：复现实验留痕（可复现，供 M3/回归）
 

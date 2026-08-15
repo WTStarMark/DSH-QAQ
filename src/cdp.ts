@@ -76,13 +76,6 @@ function connectWs(url: string): Promise<WebSocket> {
   })
 }
 
-/** Resolve an original browser target list for reuse (planned, not used yet). */
-export async function listPages(debugPort: number): Promise<any[]> {
-  const res = await fetch('http://127.0.0.1:' + debugPort + '/json')
-  if (!res.ok) throw new Error('CDP /json failed: ' + res.status)
-  return await res.json() as any[]
-}
-
 class CdpsSessionImpl implements CdpSession {
   private id = 0
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()

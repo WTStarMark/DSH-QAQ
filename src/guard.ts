@@ -3,12 +3,17 @@
  * long-lived GUI: for qaq dsh web the guard spawns it, wait for host+UI health,
  * snapshots last-good on success, and otherwise drives failure counting +
  * rollback + a single post-rollback restart (both gated by the anti-loop fence).
+ *
+ * Transient-failure tolerance: a boot is retried up to `retries` times before it
+ * is finally counted as a genuine failure, so one-off Windows flakes (e.g.
+ * EBUSY on a config watcher mid-boot, or a client bundle script that transiently
+ * fails to load) resolve on their own instead of advancing the strike counter.
  */
 import { spawnDsh, type DshSupervisor } from './spawn-dsh.ts'
 import { detectUi } from './detector-ui.ts'
-import { readState, writeState, profileState, acquireLock } from './store.ts'
+import { readState, writeState, profileState } from './store.ts'
 import { maybeRollback, recordSuccess } from './rollback.ts'
-import { resolveDshHome, profileDir, qaqDir } from './paths.ts'
+import { resolveDshHome, profileDir } from './paths.ts'
 import { Logger } from './log.ts'
 import { join } from 'node:path'
 
@@ -23,6 +28,10 @@ export interface GuardOptions {
   uiTimeoutMs?: number
   portTimeoutMs?: number
   confirmGoodMs?: number
+  /** Extra boot retries tolerated before a transient failure is counted. Default 0 (probe sets 1). */
+  retries?: number
+  /** Consecutive same-kind failures that trigger a rollback (default 3). */
+  threshold?: number
 }
 
 export interface BootFailure {
@@ -30,6 +39,8 @@ export interface BootFailure {
   failureKind: 'host' | 'ui' | 'unknown'
   error?: string
   rolledBack: boolean
+  /** True when every tolerance retry was also still failing (the last attempt). */
+  retriesExhausted: boolean
 }
 
 export interface BootHealthy {
@@ -41,25 +52,16 @@ export interface BootHealthy {
 
 export type BootVerdict = BootHealthy | BootFailure
 
-/**
- * Supervise one dsh web boot to health OR settle a failure (count + rollback).
- * On failure the child is killed and rollback decided; on success the child is
- * left running and returned in the verdict.
- */
-export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
+/** One unattributed boot attempt: returns a raw verdict WITHOUT counting/rollback. */
+type AttemptResult = { kind: 'host' | 'ui' | 'unknown'; error: string; killed: boolean } | { kind: 'ok'; error: string; supervisor: DshSupervisor }
+async function bootAttempt(opts: GuardOptions): Promise<AttemptResult> {
   const home = opts.home ?? resolveDshHome()
-  const profile = opts.profile ?? 'web'
   const port = opts.port ?? 3080
-  const log = new Logger(home)
   const url = 'http://127.0.0.1:' + port
   const dshEnv = { ...opts.dshEnv, DSH_HOME: home }
-
-  // Ensure the dsh command listens on the guard's chosen port: append --port when absent.
   const command = ensurePortFlag(opts.command, port)
-  const supervision = spawnDsh({
-    command, cwd: opts.cwd, env: dshEnv,
-    port, portTimeoutMs: opts.portTimeoutMs ?? 30000,
-  })
+
+  const supervision = spawnDsh({ command, cwd: opts.cwd, env: dshEnv, port, portTimeoutMs: opts.portTimeoutMs ?? 30000 })
 
   let hostReady = false
   let hostError: string | undefined
@@ -67,43 +69,81 @@ export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
 
   if (!hostReady) {
     const code = await Promise.race([supervision.exit, sleep(1500), Promise.resolve(undefined)]).catch(() => undefined) as (number | null | undefined)
-    const detail = hostError ?? ('host not ready on port ' + port)
-    log.error('host boot failed: ' + detail + (code === undefined ? '' : ' exit=' + code))
     supervision.kill()
-    incrementFailure(home, profile, 'host', detail, log)
-    const rolled = await maybeRollback({ home, profile, kind: 'host', autoConfirm: opts.autoConfirm ?? false, log })
-    return { ok: false, failureKind: 'host', error: detail, rolledBack: rolled.triggered }
+    const detail = hostError ?? ('host not ready on port ' + port)
+    return { kind: 'host', error: detail + (code === undefined ? '' : ' exit=' + code), killed: true }
   }
 
-  // Host ready; L3 UI check.
   let ui
   try { ui = await detectUi(url, opts.uiTimeoutMs ?? 25000) }
   catch (err) {
-    const m = String(err instanceof Error ? err.message : err)
-    log.error('UI detector failed: ' + m)
-    return { ok: false, failureKind: 'unknown', error: m, rolledBack: false }
+    supervision.kill()
+    return { kind: 'unknown', error: 'UI detector failed: ' + String(err instanceof Error ? err.message : err), killed: true }
   }
 
   if (ui.kind === 'failed') {
-    const detail = ui.failureDetail ?? 'Failed to load plugins'
-    log.error('UI red screen: ' + detail)
     supervision.kill()
-    incrementFailure(home, profile, 'ui', ui.bodyText, log)
-    const rolled = await maybeRollback({ home, profile, kind: 'ui', autoConfirm: opts.autoConfirm ?? false, log })
-    return { ok: false, failureKind: 'ui', error: detail, rolledBack: rolled.triggered }
+    return { kind: 'ui', error: ui.failureDetail ?? 'Failed to load plugins', killed: true }
   }
-
   if (ui.kind !== 'ok') {
-    // Settled neither healthy nor failed (e.g. never settled). Not a red screen.
-    log.warn('UI did not settle (kind=' + ui.kind + '); leaving process running as unknown.')
-    return { ok: false, failureKind: 'unknown', error: 'UI unsettled (' + ui.kind + ')', rolledBack: false }
+    // Neither healthy nor failed. Leave a live process only if it's still running to
+    // minimize churn on an unsettled-but-not-crashing boot; otherwise report unknown.
+    return { kind: 'unknown', error: 'UI did not settle (kind=' + ui.kind + ')', killed: true }
   }
 
   // Healthy: confirm stable, snapshot success, and hand the live child to caller.
-  log.info('host + UI healthy; confirming for ' + (opts.confirmGoodMs ?? 20000) + 'ms')
-  await sleep(opts.confirmGoodMs ?? 20000)
-  recordSuccess(home, profile, log, join(profileDir(home, profile), 'package.json'), join(profileDir(home, profile), 'cordis.patch.yml'))
-  return { ok: true, supervisor: supervision, url }
+  return { kind: 'ok', error: '', supervisor: supervision }
+}
+
+/** Whether a boot failure looks transient (retriable) rather than a genuine misconfiguration. */
+function isTransient(attempt: { kind: string; error: string }): boolean {
+  if (attempt.kind === 'host') return true // host-not-ready / early exit is typically a flake or env issue; retry once
+  if (attempt.kind === 'unknown') return true
+  // A bundle-load "did not activate" that is NOT a service-inject pending is a load flake.
+  const e = attempt.error
+  if (/bundle script .* failed to load/.test(e)) return true
+  if (/import failed/.test(e)) return true
+  return false
+}
+
+/**
+ * Supervise dsh web to health (count + rollback only after tolerance retries are
+ * exhausted). On success the child is left running and returned in the verdict.
+ */
+export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
+  const home = opts.home ?? resolveDshHome()
+  const profile = opts.profile ?? 'web'
+  const log = new Logger(home)
+  const retries = opts.retries ?? 0
+
+  let last: AttemptResult | null = null
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    last = await bootAttempt(opts)
+    if (last.kind === 'ok') {
+      // Healthy: snapshot success and return the live child.
+      log.info('host + UI healthy; confirming for ' + (opts.confirmGoodMs ?? 20000) + 'ms')
+      await sleep(opts.confirmGoodMs ?? 20000)
+      recordSuccess(home, profile, log, join(profileDir(home, profile), 'package.json'), join(profileDir(home, profile), 'cordis.patch.yml'))
+      return { ok: true, supervisor: last.supervisor!, url: 'http://127.0.0.1:' + (opts.port ?? 3080) }
+    }
+    if (attempt < retries && isTransient(last)) {
+      log.warn('transient boot failure (kind=' + last.kind + '): ' + last.error + '; retrying (' + (retries - attempt) + ' left)')
+      continue
+    }
+    break // genuine failure, or retries exhausted
+  }
+  if (!last) last = { kind: 'unknown', error: 'no boot attempted', killed: true }
+
+  // Count the failure and decide rollback.
+  const lastOk = last as Exclude<AttemptResult, { kind: 'ok' }>
+  const kind = lastOk.kind === 'ui' ? 'ui' : lastOk.kind === 'host' ? 'host' : 'unknown'
+  log.error((kind === 'ui' ? 'UI red screen: ' : 'boot failed: ') + lastOk.error)
+  if (kind === 'host' || kind === 'ui') {
+    incrementFailure(home, profile, kind, lastOk.error, log)
+    const rolled = await maybeRollback({ home, profile, kind, autoConfirm: opts.autoConfirm ?? false, log, threshold: opts.threshold })
+    return { ok: false, failureKind: kind, error: lastOk.error, rolledBack: rolled.triggered, retriesExhausted: true }
+  }
+  return { ok: false, failureKind: 'unknown', error: lastOk.error, rolledBack: false, retriesExhausted: true }
 }
 
 function ensurePortFlag(cmd: string[], port: number): string[] {
