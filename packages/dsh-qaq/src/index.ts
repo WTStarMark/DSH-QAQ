@@ -5,12 +5,24 @@
  * and history/. Backup-only: it never detects failure, never rolls back, and
  * changes no DSH behavior.
  */
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
+import { homedir } from 'node:os'
 import { copyFileSync, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
-import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 
 export const name = 'dsh-qaq'
+
+/** Inline equivalent of @deepseek-ai/dsh-home-paths' resolveDshHome: a non-empty
+ * DSH_HOME wins, otherwise ~/.dsh. Inlined (instead of imported) so the plugin
+ * has ZERO runtime dependencies: it is mounted into a profile via a junction
+ * from outside the DSH tree, and a bare-specifier import would walk up the
+ * QAQ repo's node_modules — which never contains @deepseek-ai — and fail the
+ * very boot this tool exists to guard. */
+function resolveDshHome(): string {
+  const fromEnv = process.env.DSH_HOME
+  const selected = fromEnv !== undefined && fromEnv.trim().length > 0 ? fromEnv : join(homedir(), '.dsh')
+  return resolve(selected)
+}
 
 const QAQ_DIR = '.qaq'
 const KEEP = 5
