@@ -81,14 +81,17 @@ Global: `--yes` auto-confirms rollbacks.
 
 - **3** consecutive failures of the same kind (host or UI) trigger a rollback.
 - Confirmation is required by default (`Y/N`); `--yes` makes it fully automatic.
+- **Declining the confirmation stops the guard without auto-restart**: the broken config is left in place (preserved under `rolled-back/` too) for manual recovery — the guard never restarts with an auto-confirmed rollback behind your back.
 - After a rollback a **5-minute anti-loop fence** stops repeated auto-restarts if the restart still fails; the user is pointed at `rolled-back/`.
 
 ## Reliability features
 
-- **Transient-failure retry** (`retries=1`): suspected one-off flakes (host not ready, a client bundle that transiently fails to load) are retried once and not counted, so a Windows EBUSY does not corrupt the strike counter.
+- **Transient-failure retry** (`retries=1`): suspected one-off flakes (host not ready, a client bundle that transiently fails to load) are retried once and not counted, so a Windows EBUSY does not corrupt the strike counter. Every retried attempt kills its child first, so a failed boot never leaks a process that would hold the port or hang the guard.
+- **Confirmation-window re-probe**: after the first healthy DOM probe, the boot must stay stable for `--confirm-ms`, then the real DOM is probed once more before a last-good snapshot is written — a boot that degrades right after first health is never recorded as good.
 - **PID-aware guard lock**: a stale lock left by a crashed guard is auto-reclaimed on the next run.
 - **Rollback diff preview**: prints the config diff (current vs. last-good) before `Y/N`.
 - **Deterministic history retention**: snapshots sort by their ISO-timestamp names, stable across restarts.
+- **Fast host-failure reporting**: a child that exits before its port opens (or a spawn failure such as a missing command) is reported immediately instead of waiting out the full port timeout.
 
 ## Testing
 
