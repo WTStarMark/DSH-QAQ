@@ -1,38 +1,38 @@
 @echo off
 setlocal enabledelayedexpansion
-title QAQ ä¸€é”®å®‰è£…
+title QAQ Ò»¼ü°²×°
 cd /d "%~dp0\.."
 
 echo ============================================================
-echo   QAQ - DeepSeek Harness å¯åŠ¨å®¹ç¾å®ˆå«  ä¸€é”®å®‰è£…
+echo   QAQ - DeepSeek Harness Æô¶¯ÈİÔÖÊØÎÀ  Ò»¼ü°²×°
 echo ============================================================
 
 REM --- check node ---
 node -v >nul 2>&1
 if errorlevel 1 (
   echo.
-  echo [é”™è¯¯] æœªæ£€æµ‹åˆ° Node.jsã€‚è¯·å…ˆåˆ° https://nodejs.org å®‰è£… Node.js 22 æˆ–æ›´é«˜ç‰ˆæœ¬ã€‚
+  echo [´íÎó] Î´¼ì²âµ½ Node.js¡£ÇëÏÈµ½ https://nodejs.org °²×° Node.js 22 »ò¸ü¸ß°æ±¾¡£
   pause
   exit /b 1
 )
-echo [1/3] Node.jsï¼šok
+echo [1/3] Node.js£ºok
 
 REM --- install deps via pnpm (or npm fallback) ---
 echo.
-echo [2/3] æ­£åœ¨å®‰è£…ä¾èµ–ï¼ˆé¦–æ¬¡éœ€è”ç½‘ï¼Œå¯èƒ½è€—æ—¶ 1-3 åˆ†é’Ÿï¼‰...
+echo [2/3] ÕıÔÚ°²×°ÒÀÀµ£¨Ê×´ÎĞèÁªÍø£¬¿ÉÄÜºÄÊ± 1-3 ·ÖÖÓ£©...
 where pnpm >nul 2>&1
 if not errorlevel 1 (
   call pnpm install
   if errorlevel 1 (
-    echo [é”™è¯¯] pnpm install å¤±è´¥ï¼Œè¯·æ£€æŸ¥ç½‘ç»œæˆ–æ‰‹åŠ¨æ‰§è¡Œ pnpm installã€‚
+    echo [´íÎó] pnpm install Ê§°Ü£¬Çë¼ì²éÍøÂç»òÊÖ¶¯Ö´ĞĞ pnpm install¡£
     pause
     exit /b 1
   )
 ) else (
-  echo [æç¤º] æœªæ‰¾åˆ° pnpmï¼Œæ”¹ç”¨ corepack/npx å®‰è£… ...
+  echo [ÌáÊ¾] Î´ÕÒµ½ pnpm£¬¸ÄÓÃ corepack/npx °²×° ...
   call npx -y pnpm@11 install
   if errorlevel 1 (
-    echo [é”™è¯¯] ä¾èµ–å®‰è£…å¤±è´¥ã€‚è¯·æ‰‹åŠ¨æ‰§è¡Œ pnpm install åé‡è¯•ã€‚
+    echo [´íÎó] ÒÀÀµ°²×°Ê§°Ü¡£ÇëÊÖ¶¯Ö´ĞĞ pnpm install ºóÖØÊÔ¡£
     pause
     exit /b 1
   )
@@ -40,24 +40,24 @@ if not errorlevel 1 (
 
 REM --- build the single-file executable ---
 echo.
-echo [3/3] æ­£åœ¨æ„å»º dist/qaq.mjs ...
+echo [3/3] ÕıÔÚ¹¹½¨ dist/qaq.mjs ...
 call pnpm build
 if errorlevel 1 (
-  echo [é”™è¯¯] æ„å»ºå¤±è´¥ã€‚è¯·æŸ¥çœ‹ä¸Šæ–¹é”™è¯¯ã€‚
+  echo [´íÎó] ¹¹½¨Ê§°Ü¡£Çë²é¿´ÉÏ·½´íÎó¡£
   pause
   exit /b 1
 )
 if not exist "dist\qaq.mjs" (
-  echo [é”™è¯¯] æ„å»ºå®Œæˆä½†æœªæ‰¾åˆ° dist\qaq.mjsï¼Œäº§ç‰©å¯èƒ½ä¸å®Œæ•´ã€‚
+  echo [´íÎó] ¹¹½¨Íê³Éµ«Î´ÕÒµ½ dist\qaq.mjs£¬²úÎï¿ÉÄÜ²»ÍêÕû¡£
   pause
   exit /b 1
 )
 
 echo.
 echo ============================================================
-echo   å®‰è£…å®Œæˆï¼å¼€å§‹ä½¿ç”¨ï¼š
-echo     bin\qaq-web.cmd   åŒå‡»æ‰“å¼€å®ˆå«æ§åˆ¶å°ï¼ˆæ¨èï¼‰
-echo     node bin\qaq.mjs console    æˆ–ä»å‘½ä»¤è¡Œå¯åŠ¨æ§åˆ¶å°
-echo   ä½¿ç”¨å‰å»ºè®®æ‰§è¡Œä¸€æ¬¡ï¼šqaq console èœå•é€‰ [6] è‡ªåŠ¨æŒ‚è½½å¤‡ä»½æ’ä»¶
+echo   °²×°Íê³É£¡¿ªÊ¼Ê¹ÓÃ£º
+echo     bin\qaq-web.cmd   Ë«»÷´ò¿ªÊØÎÀ¿ØÖÆÌ¨£¨ÍÆ¼ö£©
+echo     node bin\qaq.mjs console    »ò´ÓÃüÁîĞĞÆô¶¯¿ØÖÆÌ¨
+echo   Ê¹ÓÃÇ°½¨ÒéÖ´ĞĞÒ»´Î£ºqaq console ²Ëµ¥Ñ¡ [6] ×Ô¶¯¹ÒÔØ±¸·İ²å¼ş
 echo ============================================================
 pause

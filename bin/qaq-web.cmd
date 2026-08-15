@@ -1,18 +1,18 @@
 @echo off
 setlocal
-title QAQ Guard - DeepSeek Harness å¯åŠ¨å®¹ç¾å®ˆå«
+title QAQ Guard - DeepSeek Harness Æô¶¯ÈİÔÖÊØÎÀ
 cd /d "%~dp0\.."
 echo ============================================================
-echo   QAQ - DeepSeek Harness å¯åŠ¨å®¹ç¾å®ˆå«æ§åˆ¶å°
-echo   (äº¤äº’å¼èœå•ï¼šä¸€é”®å¯åŠ¨ / æŸ¥çœ‹çŠ¶æ€ / å¤‡ä»½ / å›æ»š / æ—¥å¿—)
+echo   QAQ - DeepSeek Harness Æô¶¯ÈİÔÖÊØÎÀ¿ØÖÆÌ¨
+echo   (½»»¥Ê½²Ëµ¥£ºÒ»¼üÆô¶¯ / ²é¿´×´Ì¬ / ±¸·İ / »Ø¹ö / ÈÕÖ¾)
 echo ============================================================
 if not exist "node_modules" (
   echo.
-  echo [qaq] è¿˜æ²¡å®‰è£…ä¾èµ–ã€‚è¯·å…ˆè¿è¡Œï¼šbin\qaq-install.cmd
+  echo [qaq] »¹Ã»°²×°ÒÀÀµ¡£ÇëÏÈÔËĞĞ£ºbin\qaq-install.cmd
   pause
   exit /b 1
 )
 node --import tsx/esm src\cli.ts console %*
 echo.
-echo [qaq] å®ˆå«æ§åˆ¶å°å·²é€€å‡ºã€‚
+echo [qaq] ÊØÎÀ¿ØÖÆÌ¨ÒÑÍË³ö¡£
 pause
