@@ -187,24 +187,24 @@ function writeFileQuiet(path: string, data: string): void {
 export function recordSuccess(home: string, profile: string, log: Logger, packageJsonPath: string, patchYmlPath: string | null): void {
   const state = readState(home)
   const prof = profileState(state, profile)
-  const ts = new Date().toISOString().replace(/[:.]/g, '-')
-  // Set every state field together (counters, lastSuccess, anti-loop fence, and
-  // the lastGoodSnapshot pointer) and persist ONCE, so the recorded snapshot
-  // reference and the counters never drift apart across two separate writes.
   prof.hostFailures = 0
   prof.uiFailures = 0
   prof.lastSuccess = new Date().toISOString()
   // Clear the anti-loop fence on a genuine success.
   delete prof.rolledBackAt
-  prof.lastGoodSnapshot = 'history/' + ts
   writeState(home, state)
 
   const q = qaqDir(home)
+  const ts = new Date().toISOString().replace(/[:.]/g, '-')
   // latest-good: write fresh, keep as the canonical copy.
   writeSnapshot(home, join(q, 'latest-good'), { packageJson: packageJsonPath, patchYml: patchYmlPath }, profile)
   // history: time-stamped copy, prune to 5.
   writeSnapshot(home, join(q, 'history', ts), { packageJson: packageJsonPath, patchYml: patchYmlPath }, profile)
   pruneSnapshots(home, 'history', 5)
+  const good = join(q, 'latest-good', 'manifest.json')
+  // record lastGoodSnapshot path in state
+  state.profiles[profile].lastGoodSnapshot = 'history/' + ts
+  writeState(home, state)
   log.access('recorded success and snapshot for profile ' + profile, { profile, ts, snapshots: 'latest-good + history/' + ts })
   log.info('recorded success and snapshot for profile ' + profile)
 }

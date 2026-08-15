@@ -58,10 +58,12 @@ export type BootVerdict = BootHealthy | BootFailure
  * `definitive` is set on a host failure where the child died with a fail-loud
  * boot marker (a deterministic config error — retrying cannot help). */
 type AttemptResult = { kind: 'host' | 'ui' | 'unknown'; error: string; killed: boolean; definitive?: boolean } | { kind: 'ok'; error: string; supervisor: DshSupervisor }
-async function bootAttempt(opts: GuardOptions, command: string[], port: number): Promise<AttemptResult> {
+async function bootAttempt(opts: GuardOptions): Promise<AttemptResult> {
   const home = opts.home ?? resolveDshHome()
+  const port = opts.port ?? 3080
   const url = 'http://127.0.0.1:' + port
   const dshEnv = { ...opts.dshEnv, DSH_HOME: home }
+  const command = ensurePortFlag(opts.command, port)
 
   const log = new Logger(home)
   const supervision = spawnDsh({
@@ -151,18 +153,12 @@ export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
   const profile = opts.profile ?? 'web'
   const log = new Logger(home)
   const retries = opts.retries ?? 0
-  // The authoritative port + command are resolved once here. A --port <value>
-  // already present in the command is authoritative (it is what the spawned
-  // process will actually bind); otherwise opts.port (or 3080) is used and
-  // appended to the command. Probe and spawn both use the SAME port, so a
-  // command-flags vs bootOption mismatch can never probe the wrong port.
-  const target = resolveBootTarget(opts)
-  const url = 'http://127.0.0.1:' + target.port
+  const url = 'http://127.0.0.1:' + (opts.port ?? 3080)
 
   let last: AttemptResult | null = null
   let exhausted = false
   for (let attempt = 0; attempt <= retries; attempt++) {
-    last = await bootAttempt(opts, target.command, target.port)
+    last = await bootAttempt(opts)
     if (last.kind === 'ok') {
       // Healthy: confirm the boot stays stable for the window, then re-probe the
       // real DOM once before snapshotting, so a boot that degrades right after
@@ -228,29 +224,11 @@ async function confirmStable(supervisor: DshSupervisor, url: string, opts: Guard
   }
 }
 
-/** Parse the port value from a command that carries an explicit `--port <value>`. */
-export function parsePortFrom(cmd: string[]): number | undefined {
-  for (let i = 0; i < cmd.length; i++) {
-    if (cmd[i] === '--port' && cmd[i + 1] !== undefined) {
-      const n = Number(cmd[i + 1])
-      return Number.isInteger(n) && n > 0 ? n : undefined
-    }
-  }
-  return undefined
-}
-
-/**
- * Resolve the authoritative boot target: the command to spawn and the port
- * that both the probe and the spawned process will use. A --port <value>
- * already in the command wins (the spawned process binds it); otherwise
- * opts.port (or 3080) is appended to the command. This keeps probe + spawn
- * on one consistent port.
- */
-export function resolveBootTarget(opts: { command: string[]; port?: number }): { command: string[]; port: number } {
-  const cmdPort = parsePortFrom(opts.command)
-  if (cmdPort !== undefined) return { command: opts.command, port: cmdPort }
-  const port = opts.port ?? 3080
-  return { command: [...opts.command, '--port', String(port)], port }
+function ensurePortFlag(cmd: string[], port: number): string[] {
+  // Respect an explicit --port <value> in the command; a trailing bare '--port'
+  // (no value) is incomplete and must be completed, not left hanging.
+  if (cmd.some((a, i) => a === '--port' && cmd[i + 1] !== undefined)) return cmd
+  return [...cmd, '--port', String(port)]
 }
 
 function incrementFailure(home: string, profile: string, kind: 'host' | 'ui', error: string, log: Logger): void {

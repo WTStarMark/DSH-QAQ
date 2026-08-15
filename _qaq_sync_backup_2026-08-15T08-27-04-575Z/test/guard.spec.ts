@@ -28,7 +28,7 @@ vi.mock('../src/detector-ui.ts', () => ({
   detectUi: (...args: unknown[]) => detectUiMock(...args),
 }))
 
-import { superviseBoot, resolveBootTarget, parsePortFrom } from '../src/guard.ts'
+import { superviseBoot } from '../src/guard.ts'
 
 let home = ''
 function mkSupervisor() {
@@ -188,43 +188,3 @@ describe('guard.bootAttempt leak regression', () => {
     expect(manifest.profile).toBe('web')
   })
 })
-
-
-describe('guard.resolveBootTarget (authoritative port/command resolution)', () => {
-  it('appends --port from opts.port when the command carries no --port flag', () => {
-    const t = resolveBootTarget({ command: ['dsh', 'web'], port: 3080 })
-    expect(t.port).toBe(3080)
-    expect(t.command).toEqual(['dsh', 'web', '--port', '3080'])
-  })
-
-  it('defaults to 3080 when neither the command nor opts.port provides a port', () => {
-    const t = resolveBootTarget({ command: ['dsh', 'web'] })
-    expect(t.port).toBe(3080)
-    expect(t.command).toEqual(['dsh', 'web', '--port', '3080'])
-  })
-
-  it('treats a --port already in the command as authoritative and probes THAT port', () => {
-    // The regression this fixes: previously the probe URL used opts.port while
-    // the spawned process bound the command's --port — probing the wrong port.
-    const t = resolveBootTarget({ command: ['dsh', 'web', '--port', '4000'], port: 3080 })
-    expect(t.port).toBe(4000)
-    // The command is left untouched (its explicit flag already governs the bind).
-    expect(t.command).toEqual(['dsh', 'web', '--port', '4000'])
-  })
-
-  it('does not append a second --port when the command already specifies one later', () => {
-    const t = resolveBootTarget({ command: ['node', 'x', 'web', '--port', '9000'] })
-    expect(t.port).toBe(9000)
-    expect(t.command).toEqual(['node', 'x', 'web', '--port', '9000'])
-  })
-
-  it('parsePortFrom returns undefined when the trailing --port has no value', () => {
-    expect(parsePortFrom(['dsh', 'web', '--port'])).toBeUndefined()
-    // And a resolve on such a command appends a complete --port pair.
-    const t = resolveBootTarget({ command: ['dsh', 'web', '--port'], port: 3080 })
-    expect(t.port).toBe(3080)
-    expect(t.command[t.command.length - 2]).toBe('--port')
-    expect(t.command[t.command.length - 1]).toBe('3080')
-  })
-})
-

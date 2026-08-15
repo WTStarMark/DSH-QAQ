@@ -132,7 +132,7 @@ function cmdReset(profile: string): void {
 
 function cmdConsole(args: CliArgs): Promise<void> {
   return openConsole(args.profile, {
-    yes: args.yes, port: args.port, cwd: args.cwd,
+    yes: args.yes, port: args.port,
     confirmMs: args.confirmMs, uiTimeoutMs: args.uiTimeoutMs, threshold: args.threshold,
     lang: args.lang,
   })

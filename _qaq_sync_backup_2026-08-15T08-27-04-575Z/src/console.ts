@@ -24,7 +24,6 @@ import { makeT, resolveLang, type Lang, type T } from './i18n.ts'
 export interface ConsoleOpts {
   yes?: boolean
   port?: number
-  cwd?: string
   confirmMs?: number
   uiTimeoutMs?: number
   threshold?: number
@@ -119,7 +118,7 @@ async function runLaunch(home: string, report: EnvReport, profile: string, opts:
 
   // Fresh preflight at launch time: the port/browser/env may have changed since
   // the banner was printed (e.g. a previous supervised child still holds it).
-  const fresh = await preflight({ port: opts.port ?? report.port, cwd: opts.cwd, lang });
+  const fresh = await preflight({ port: opts.port ?? report.port, lang });
   const errors = fresh.problems.filter(x => x.sev === 'error');
   if (errors.length) {
     process.stdout.write(c(RED, t('console.launch.preflightError')) + '\n');
@@ -208,7 +207,7 @@ function printHeader(report: EnvReport): void {
 }
 
 async function runConsole(home: string, profile: string, opts: ConsoleOpts, ask: (p: string) => Promise<string>): Promise<void> {
-  const report = await preflight({ port: opts.port, cwd: opts.cwd, lang })
+  const report = await preflight({ port: opts.port, lang })
 
   // One screen at a time: clear before every menu so the window never stacks
   // stale menus/output (the header is re-printed each time). No-op on non-TTY.
