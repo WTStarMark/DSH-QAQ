@@ -1,5 +1,5 @@
 /**
- * Environment auto-discovery and pre-launch self-check (傻瓜式 part):
+ * Environment auto-discovery and pre-launch self-check (懒人脚本 part):
  *  - find the `dsh` command (PATH) or a DSH checkout (--cwd / QAQ_DSH_CMD /
  *    a parent/sibling checkout scan)
  *  - find a usable browser for the UI probe (Chrome/Chromium/Edge)

@@ -20,7 +20,7 @@ DSH Web 存在一种「宿主活、UI 红屏」的失败模式：宿主进程正
 
 ## 安装 / 快速上手
 
-**一键安装（Windows，傻瓜式）**：双击 `bin\qaq-install.cmd`（装依赖 + 构建），再双击 `bin\qaq-web.cmd` 打开交互式守卫控制台——无需记任何命令。
+**一键安装（Windows，懒人脚本）**：双击 `bin\qaq-install.cmd`（装依赖 + 构建），再双击 `bin\qaq-web.cmd` 打开交互式守卫控制台——无需记任何命令。
 
 手动安装：
 
@@ -57,7 +57,7 @@ qaq dsh web --port 3080 --yes
 | `qaq backup [--profile web]` | 手动快照当前 profile 为 last-good |
 | `qaq restore --to <snapDir> [--profile web]` | 手动从某快照还原 profile |
 | `qaq reset --profile web` | 清零失败计数 |
-| `qaq console` | 打开交互式菜单（傻瓜式，同 `bin\qaq-web.cmd`） |
+| `qaq console` | 打开交互式菜单（懒人脚本，同 `bin\qaq-web.cmd`） |
 | `qaq install-plugin [--profile web]` | 自动把 dsh-qaq 备份插件挂载进 profile |
 
 全局开关：`--yes` 自动确认回滚。
@@ -188,7 +188,7 @@ src/
   store.ts          ~/.dsh/.qaq 原子读写 + 快照管理 + 锁
   rollback.ts       回滚 + 坏版备份 + 防死循环 + 成功记账
   env.ts            环境自动发现 + 启动前自检（dsh / 浏览器 / 端口）
-  console.ts        交互式菜单 GUI（傻瓜式，CMD 窗口）
+  console.ts        交互式菜单 GUI（懒人脚本，CMD 窗口）
   install-plugin.ts 自动挂载 dsh-qaq 备份插件（失败即撤销，绝不弄坏启动）
   paths.ts / log.ts （log.ts：结构化多文件轮转日志）
 packages/dsh-qaq/  DSH 备份插件（host boot settle 后写快照，仅备份不改行为）

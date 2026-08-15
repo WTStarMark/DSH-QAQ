@@ -1,10 +1,12 @@
 @echo off
 setlocal enabledelayedexpansion
 title QAQ 一键安装
+REM 作者：WTStarMark
 cd /d "%~dp0\.."
 
 echo ============================================================
 echo   QAQ - DeepSeek Harness 启动容灾守卫  一键安装
+echo   作者：WTStarMark
 echo ============================================================
 
 REM --- check node ---

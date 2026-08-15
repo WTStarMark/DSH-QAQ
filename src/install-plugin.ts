@@ -1,5 +1,5 @@
 /**
- * Auto-mount the dsh-qaq backup plugin into a DSH profile (傻瓜式 part).
+ * Auto-mount the dsh-qaq backup plugin into a DSH profile (懒人脚本 part).
  *
  * DSH loads a profile's plugins as BUNDLE LAYERS: each name in
  * `dsh.profile.bundles` is resolved, its package.json `dsh.bundle.patch` is

@@ -20,7 +20,7 @@ DSH's Web surface has a failure mode where the **host is alive but the UI red-sc
 
 ## Install / Quick start
 
-**One-click (Windows, 傻瓜式)**: double-click `bin\qaq-install.cmd` (installs deps + builds), then double-click `bin\qaq-web.cmd` to open the interactive guard console — no commands to remember.
+**One-click (Windows, 懒人脚本)**: double-click `bin\qaq-install.cmd` (installs deps + builds), then double-click `bin\qaq-web.cmd` to open the interactive guard console — no commands to remember.
 
 Or manually:
 
@@ -57,7 +57,7 @@ qaq dsh web --port 3080 --yes
 | `qaq backup [--profile web]` | snapshot the current profile as last-good |
 | `qaq restore --to <snapDir> [--profile web]` | restore a profile from a snapshot directory |
 | `qaq reset --profile web` | zero the failure counters |
-| `qaq console` | open the interactive menu (傻瓜式, same as `bin\qaq-web.cmd`) |
+| `qaq console` | open the interactive menu (懒人脚本, same as `bin\qaq-web.cmd`) |
 | `qaq install-plugin [--profile web]` | auto-mount the `dsh-qaq` backup plugin into a profile |
 
 Global: `--yes` auto-confirms rollbacks.
@@ -188,7 +188,7 @@ src/
   store.ts          atomic ~/.dsh/.qaq read/write + snapshot management + lock
   rollback.ts       rollback + broken-config backup + anti-loop + success bookkeeping
   env.ts            auto-discovery + pre-launch self-check (dsh/browser/port)
-  console.ts        interactive menu GUI (傻瓜式, CMD window)
+  console.ts        interactive menu GUI (懒人脚本, CMD window)
   install-plugin.ts auto-mount the dsh-qaq backup plugin (rollback-safe)
   paths.ts / log.ts  (log.ts: structured multi-file rotating logger)
 packages/dsh-qaq/  DSH backup plugin (snapshots after host boot settles; backup-only)

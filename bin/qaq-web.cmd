@@ -1,6 +1,7 @@
 @echo off
 setlocal
 title QAQ Guard - DeepSeek Harness Æô¶¯ÈİÔÖÊØÎÀ
+REM ×÷Õß£ºWTStarMark
 cd /d "%~dp0\.."
 if not exist "node_modules" (
   echo.

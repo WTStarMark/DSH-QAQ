@@ -38,7 +38,7 @@ Usage:
   qaq backup [--profile <name>]            snapshot the current profile as last-good
   qaq restore --to <snapDir> [--profile <name>]  restore a profile from a snapshot dir
   qaq reset --profile <name>               zero the failure counters
-  qaq console                             open the interactive menu (傻瓜式)
+  qaq console                             open the interactive menu (懒人脚本)
   qaq install-plugin [--profile <name>]   auto-mount dsh-qaq backup plugin
 Globals:
   --yes                                     auto-confirm rollbacks
