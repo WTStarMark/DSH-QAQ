@@ -1,7 +1,12 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { copyFileSync, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync } from "node:fs";
-import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 const name = "dsh-qaq";
+function resolveDshHome() {
+  const fromEnv = process.env.DSH_HOME;
+  const selected = fromEnv !== void 0 && fromEnv.trim().length > 0 ? fromEnv : join(homedir(), ".dsh");
+  return resolve(selected);
+}
 const QAQ_DIR = ".qaq";
 const KEEP = 5;
 const FILES = ["package.json", "cordis.patch.yml"];
