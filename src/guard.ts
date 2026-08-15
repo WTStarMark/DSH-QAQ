@@ -16,7 +16,6 @@ import { maybeRollback, recordSuccess } from './rollback.ts'
 import { resolveDshHome, profileDir } from './paths.ts'
 import { Logger } from './log.ts'
 import { join } from 'node:path'
-
 export interface GuardOptions {
   home?: string
   profile?: string
@@ -38,7 +37,10 @@ export interface BootFailure {
   ok: false
   failureKind: 'host' | 'ui' | 'unknown'
   error?: string
+  /** True only when a rollback was actually applied (config restored to last-good). */
   rolledBack: boolean
+  /** True when the user declined a rollback at the confirmation prompt. */
+  rollbackCancelled?: boolean
   /** True when every tolerance retry was also still failing (the last attempt). */
   retriesExhausted: boolean
 }
@@ -68,7 +70,8 @@ async function bootAttempt(opts: GuardOptions): Promise<AttemptResult> {
   try { hostReady = await supervision.ready } catch (err) { hostError = String(err instanceof Error ? err.message : err) }
 
   if (!hostReady) {
-    const code = await Promise.race([supervision.exit, sleep(1500), Promise.resolve(undefined)]).catch(() => undefined) as (number | null | undefined)
+    // Wait up to 1.5s for an exit code so the failure detail can name it.
+    const code = await Promise.race([supervision.exit, sleep(1500)]) as (number | null | undefined)
     supervision.kill()
     const detail = hostError ?? ('host not ready on port ' + port)
     return { kind: 'host', error: detail + (code === undefined ? '' : ' exit=' + code), killed: true }
@@ -86,8 +89,10 @@ async function bootAttempt(opts: GuardOptions): Promise<AttemptResult> {
     return { kind: 'ui', error: ui.failureDetail ?? 'Failed to load plugins', killed: true }
   }
   if (ui.kind !== 'ok') {
-    // Neither healthy nor failed. Leave a live process only if it's still running to
-    // minimize churn on an unsettled-but-not-crashing boot; otherwise report unknown.
+    // Neither healthy nor failed within the UI timeout. Always kill: a live child
+    // left behind would hold the port during a retry (EADDRINUSE) and would keep
+    // this guard's event loop alive, hanging the process after a reported failure.
+    supervision.kill()
     return { kind: 'unknown', error: 'UI did not settle (kind=' + ui.kind + ')', killed: true }
   }
 
@@ -115,16 +120,24 @@ export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
   const profile = opts.profile ?? 'web'
   const log = new Logger(home)
   const retries = opts.retries ?? 0
+  const url = 'http://127.0.0.1:' + (opts.port ?? 3080)
 
   let last: AttemptResult | null = null
   for (let attempt = 0; attempt <= retries; attempt++) {
     last = await bootAttempt(opts)
     if (last.kind === 'ok') {
-      // Healthy: snapshot success and return the live child.
-      log.info('host + UI healthy; confirming for ' + (opts.confirmGoodMs ?? 20000) + 'ms')
-      await sleep(opts.confirmGoodMs ?? 20000)
-      recordSuccess(home, profile, log, join(profileDir(home, profile), 'package.json'), join(profileDir(home, profile), 'cordis.patch.yml'))
-      return { ok: true, supervisor: last.supervisor!, url: 'http://127.0.0.1:' + (opts.port ?? 3080) }
+      // Healthy: confirm the boot stays stable for the window, then re-probe the
+      // real DOM once before snapshotting, so a boot that degrades right after
+      // the first healthy probe is never recorded as last-good.
+      const confirmed = await confirmStable(last.supervisor!, url, opts, log)
+      if (confirmed.ok) {
+        recordSuccess(home, profile, log, join(profileDir(home, profile), 'package.json'), join(profileDir(home, profile), 'cordis.patch.yml'))
+        return { ok: true, supervisor: last.supervisor!, url }
+      }
+      // The boot did not stay healthy during the confirmation window — treat
+      // this attempt as a failure and continue (retry or count).
+      last.supervisor!.kill()
+      last = { kind: confirmed.kind, error: confirmed.error, killed: true }
     }
     if (attempt < retries && isTransient(last)) {
       log.warn('transient boot failure (kind=' + last.kind + '): ' + last.error + '; retrying (' + (retries - attempt) + ' left)')
@@ -141,9 +154,32 @@ export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
   if (kind === 'host' || kind === 'ui') {
     incrementFailure(home, profile, kind, lastOk.error, log)
     const rolled = await maybeRollback({ home, profile, kind, autoConfirm: opts.autoConfirm ?? false, log, threshold: opts.threshold })
-    return { ok: false, failureKind: kind, error: lastOk.error, rolledBack: rolled.triggered, retriesExhausted: true }
+    return {
+      ok: false, failureKind: kind, error: lastOk.error,
+      rolledBack: rolled.restored, rollbackCancelled: rolled.cancelled,
+      retriesExhausted: true,
+    }
   }
   return { ok: false, failureKind: 'unknown', error: lastOk.error, rolledBack: false, retriesExhausted: true }
+}
+
+/** Confirm a healthy boot stays healthy for `confirmGoodMs`, then re-probe the UI once. */
+async function confirmStable(supervisor: DshSupervisor, url: string, opts: GuardOptions, log: Logger): Promise<{ ok: true } | { ok: false; kind: 'host' | 'ui' | 'unknown'; error: string }> {
+  const confirmMs = opts.confirmGoodMs ?? 20000
+  log.info('host + UI healthy; confirming for ' + confirmMs + 'ms')
+  await sleep(confirmMs)
+  if (supervisor.child.exitCode !== null) {
+    return { ok: false, kind: 'host', error: 'process exited during confirmation window (code=' + supervisor.child.exitCode + ')' }
+  }
+  // Re-probe the real DOM to verify the UI is still healthy (stable, no red screen).
+  try {
+    const recheck = await detectUi(url, Math.min(confirmMs, 15000))
+    if (recheck.kind === 'ok') return { ok: true }
+    if (recheck.kind === 'failed') return { ok: false, kind: 'ui', error: recheck.failureDetail ?? 'Failed to load plugins' }
+    return { ok: false, kind: 'unknown', error: 'UI did not stay settled during confirmation (kind=' + recheck.kind + ')' }
+  } catch (err) {
+    return { ok: false, kind: 'unknown', error: 'UI recheck failed: ' + String(err instanceof Error ? err.message : err) }
+  }
 }
 
 function ensurePortFlag(cmd: string[], port: number): string[] {

@@ -24,8 +24,6 @@ export interface DshSpawnOptions {
   portTimeoutMs: number
   /** Attach child stdio to the current process (a visible CMD window). Default true. */
   attachStdio?: boolean
-  /** Custom readiness check once the port accepts a connection. */
-  isReady?: (port: number) => Promise<boolean>
 }
 
 export interface DshSupervisor {
@@ -39,17 +37,6 @@ export interface DshSupervisor {
   /** Whether any host fail-loud keyword appeared in output. */
   hasHostFailureMarker: () => boolean
   kill: () => void
-}
-
-function defaultReady(port: number): Promise<boolean> {
-  return new Promise((isReady) => {
-    const attempt = (): void => {
-      const socket = net.connect({ host: '127.0.0.1', port })
-      socket.once('connect', () => { socket.destroy(); isReady(true) })
-      socket.once('error', () => { socket.destroy(); setTimeout(attempt, 300) })
-    }
-    attempt()
-  })
 }
 
 /**
@@ -85,16 +72,38 @@ export function spawnDsh(opts: DshSpawnOptions): DshSupervisor {
     return HOST_FAIL_KEYWORDS.some(k => text.includes(k))
   }
 
-  const isReady = opts.isReady ?? defaultReady
-  const timeout = new Promise<boolean>((_, rej) => {
-    setTimeout(() => rej(new Error('host did not open port ' + opts.port + ' within ' + opts.portTimeoutMs + 'ms')), opts.portTimeoutMs)
+  // Readiness: the port must open AND the child must survive a short grace
+  // window. A child that exits before the port opens (or right after — e.g. a
+  // bind EADDRINUSE caused by a foreign process already holding the port) is a
+  // host failure reported immediately, instead of being mistaken for a ready
+  // host or silently waiting out the full timeout.
+  let settleReady!: (v: boolean) => void
+  let failReady!: (e: Error) => void
+  const ready = new Promise<boolean>((res, rej) => { settleReady = res; failReady = rej })
+  let settled = false
+  const finish = (fn: () => void): void => { if (!settled) { settled = true; clearTimeout(timer); fn() } }
+  const timer = setTimeout(() => finish(() => failReady(new Error('host did not open port ' + opts.port + ' within ' + opts.portTimeoutMs + 'ms'))), opts.portTimeoutMs)
+
+  child.once('exit', (code) => {
+    const marker = hasHostFailureMarker()
+    finish(() => failReady(new Error('host exited before ready (code=' + code + ')' + (marker ? '; fail-loud marker in output' : ''))))
   })
-  const ready = Promise.race([isReady(opts.port), timeout]).then(async (ok) => {
-    // Heuristic: if the process exited before the port opened AND a fail marker
-    // or non-zero exit occurred, treat as not ready.
-    if (!ok) return false
-    return true
+  child.once('error', (err) => {
+    finish(() => failReady(new Error('failed to spawn host: ' + err.message)))
   })
+
+  const probe = (): void => {
+    if (settled) return
+    const socket = net.connect({ host: '127.0.0.1', port: opts.port })
+    socket.once('connect', () => {
+      socket.destroy()
+      // Grace window: prove the child is not about to crash right after opening
+      // the port (covers a bind EADDRINUSE from a foreign port holder).
+      setTimeout(() => finish(() => settleReady(true)), 300)
+    })
+    socket.once('error', () => { socket.destroy(); setTimeout(probe, 300) })
+  }
+  probe()
 
   return { child, ready, exit, output: () => chunks.join(''), hasHostFailureMarker, kill: () => { try { child.kill() } catch { /* ignore */ } } }
 }
