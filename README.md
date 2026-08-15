@@ -219,7 +219,7 @@ Developer-oriented deep-dives for secondary development:
 
 Contributions are welcome — bug reports, feature requests, and pull requests all help make QAQ better.
 
-**Report a bug / request a feature**: open an [issue](https://github.com/<your-account>/QAQ/issues) with reproduction steps (excerpts from `~/.dsh/.qaq/log/access.log` and `error.log` go a long way) and your environment (OS, Node version).
+**Report a bug / request a feature**: open an [issue](https://github.com/WTStarMark/QAQ/issues) with reproduction steps (excerpts from `~/.dsh/.qaq/log/access.log` and `error.log` go a long way) and your environment (OS, Node version).
 
 **Send a pull request**:
 
