@@ -178,23 +178,22 @@ Integration fixture: `qaq-test-plugins/dsh-broken-theme` (injects a service that
 
 ## Repository layout
 
-```
-src/
-  cli.ts            command surface + supervised loop
-  guard.ts          superviseBoot orchestration (host ready -> UI detect -> count/rollback)
-  spawn-dsh.ts      spawn dsh web, inherit env, readiness/exit tracking
-  cdp.ts            minimal CDP client (headless Chrome, no Playwright)
-  detector-ui.ts    L3 text criteria
-  store.ts          atomic ~/.dsh/.qaq read/write + snapshot management + lock
-  rollback.ts       rollback + broken-config backup + anti-loop + success bookkeeping
-  env.ts            auto-discovery + pre-launch self-check (dsh/browser/port)
-  console.ts        interactive menu GUI (懒人脚本, CMD window)
-  install-plugin.ts auto-mount the dsh-qaq backup plugin (rollback-safe)
-  paths.ts / log.ts  (log.ts: structured multi-file rotating logger)
-packages/dsh-qaq/  DSH backup plugin (snapshots after host boot settles; backup-only)
-bin/               qaq / qaq-web.cmd / qaq-install.cmd launchers
-tools/  test/  docs/
-```
+| Path | Purpose |
+|------|---------|
+| `src/cli.ts` | command surface + supervised loop |
+| `src/guard.ts` | superviseBoot orchestration (host ready -> UI detect -> count/rollback) |
+| `src/spawn-dsh.ts` | spawn dsh web, inherit env, readiness/exit tracking |
+| `src/cdp.ts` | minimal CDP client (headless Chrome, no Playwright) |
+| `src/detector-ui.ts` | L3 text criteria |
+| `src/store.ts` | atomic `~/.dsh/.qaq` read/write + snapshot management + lock |
+| `src/rollback.ts` | rollback + broken-config backup + anti-loop + success bookkeeping |
+| `src/env.ts` | auto-discovery + pre-launch self-check (dsh / browser / port) |
+| `src/console.ts` | interactive menu GUI (懒人脚本, CMD window) |
+| `src/install-plugin.ts` | auto-mount the dsh-qaq backup plugin (rollback-safe) |
+| `src/paths.ts` · `src/log.ts` | path helpers; structured multi-file rotating logger |
+| `packages/dsh-qaq/` | DSH backup plugin (snapshots after host boot settles; backup-only) |
+| `bin/` | `qaq` / `qaq-web.cmd` / `qaq-install.cmd` launchers |
+| `tools/` · `test/` | integration/smoke scripts; vitest specs |
 
 ## License
 

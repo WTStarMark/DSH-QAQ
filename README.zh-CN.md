@@ -178,27 +178,22 @@ pnpm smoke     # 一键回归：单测 + 隔离 home 种子/破坏/守卫检测
 
 ## 仓库布局
 
-```
-src/
-  cli.ts            命令面 + 接管循环
-  guard.ts          superviseBoot 编排（host 就绪 -> UI 侦测 -> 计数/回滚）
-  spawn-dsh.ts      spawn dsh web、继承 env、就绪/退出监听
-  cdp.ts            极简 CDP 客户端（headless Chrome，无 Playwright）
-  detector-ui.ts    L3 文本判据
-  store.ts          ~/.dsh/.qaq 原子读写 + 快照管理 + 锁
-  rollback.ts       回滚 + 坏版备份 + 防死循环 + 成功记账
-  env.ts            环境自动发现 + 启动前自检（dsh / 浏览器 / 端口）
-  console.ts        交互式菜单 GUI（懒人脚本，CMD 窗口）
-  install-plugin.ts 自动挂载 dsh-qaq 备份插件（失败即撤销，绝不弄坏启动）
-  paths.ts / log.ts （log.ts：结构化多文件轮转日志）
-packages/dsh-qaq/  DSH 备份插件（host boot settle 后写快照，仅备份不改行为）
-bin/               qaq / qaq-web.cmd / qaq-install.cmd 启动入口
-tools/  test/  docs/
-```
-
-## 文档
-
-- 设计依据与复现实验：`docs/QAQ计划定案.md`（另有草案/定稿）。
+| 路径 | 作用 |
+|------|------|
+| `src/cli.ts` | 命令面 + 接管循环 |
+| `src/guard.ts` | superviseBoot 编排（host 就绪 -> UI 侦测 -> 计数/回滚） |
+| `src/spawn-dsh.ts` | spawn dsh web、继承 env、就绪/退出监听 |
+| `src/cdp.ts` | 极简 CDP 客户端（headless Chrome，无 Playwright） |
+| `src/detector-ui.ts` | L3 文本判据 |
+| `src/store.ts` | `~/.dsh/.qaq` 原子读写 + 快照管理 + 锁 |
+| `src/rollback.ts` | 回滚 + 坏版备份 + 防死循环 + 成功记账 |
+| `src/env.ts` | 环境自动发现 + 启动前自检（dsh / 浏览器 / 端口） |
+| `src/console.ts` | 交互式菜单 GUI（懒人脚本，CMD 窗口） |
+| `src/install-plugin.ts` | 自动挂载 dsh-qaq 备份插件（失败即撤销，绝不弄坏启动） |
+| `src/paths.ts` · `src/log.ts` | 路径助手；结构化多文件轮转日志 |
+| `packages/dsh-qaq/` | DSH 备份插件（host boot settle 后写快照，仅备份不改行为） |
+| `bin/` | `qaq` / `qaq-web.cmd` / `qaq-install.cmd` 启动入口 |
+| `tools/` · `test/` | 集成/smoke 脚本；vitest 测试 |
 
 ## License
 
