@@ -21,6 +21,10 @@ Run-Guard "phase1-healthy"
 $state1 = Get-Content (Join-Path $HOME_DIR '.qaq\state.json') -Raw -ErrorAction SilentlyContinue
 Write-Output "STATE1: $state1"
 
+function Write-NoBom($path, $content) {
+  [System.IO.File]::WriteAllText($path, $content, (New-Object System.Text.UTF8Encoding($false)))
+}
+
 # Phase 2: break the profile (add broken theme)
 $pkg = Join-Path $HOME_DIR 'profiles\web\package.json'
 $broken = @'
@@ -31,7 +35,7 @@ $broken = @'
   "dsh": { "profile": { "bundles": [ "@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app", "dsh-broken-theme" ] } }
 }
 '@
-Set-Content -Path $pkg -Value $broken -Encoding UTF8
+Write-NoBom $pkg $broken
 $nm = Join-Path $HOME_DIR 'profiles\web\node_modules'
 New-Item -ItemType Directory -Force -Path $nm | Out-Null
 $j = Join-Path $nm 'dsh-broken-theme'
