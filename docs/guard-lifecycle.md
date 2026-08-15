@@ -45,6 +45,8 @@ spawnDsh({ command, cwd, env: {...dshEnv, DSH_HOME}, port })
   │
   ├─ detectUi(url, uiTimeoutMs)
   │     ├─ throws               → kill → { kind: 'unknown', error: 'UI detector failed' }
+  │     ├─ kind === 'failed' and the child died / emitted a fail-loud marker
+  │                             → kill → { kind: 'host', error: 'host exited with UI red screen' }
   │     ├─ kind === 'failed'    → kill → { kind: 'ui', error: failureDetail }
   │     ├─ kind !== 'ok' and the child died / emitted a fail-loud marker
   │                             → kill → { kind: 'host', error: 'host exited during UI probe' }
@@ -57,6 +59,7 @@ spawnDsh({ command, cwd, env: {...dshEnv, DSH_HOME}, port })
 
 - **Crash before the port opens**: `ready` rejects → `kind: 'host'` (correct).
 - **Crash after binding the port** (boot-stage error, e.g. the user patch references a missing package): `ready` already resolved, but the UI probe never sees a healthy page. You must check `supervision.child.exitCode !== null || supervision.hasHostFailureMarker()` here — otherwise it is misclassified as `unknown` (never counted, never rolled back). This was a real bug caught by integration testing and is pinned by a regression test.
+- **Crash after serving the page** (a red screen that masks a dead host): the server bound the port, served the HTML shell + JS bundle, and *then* died on the plugin tree — the browser still renders `Failed to load plugins`. A red screen alone must not mask the host death: the `kind === 'failed'` branch checks the child's liveness too. Without this check a deterministic host crash was misreported as a UI red screen (found via the dsh-my-theme sabotage test) — pinned by a regression test.
 
 ---
 
@@ -64,6 +67,7 @@ spawnDsh({ command, cwd, env: {...dshEnv, DSH_HOME}, port })
 
 ```ts
 function isTransient(attempt): boolean {
+  if (attempt.definitive) return false          // died with a fail-loud marker: deterministic, do not retry
   if (attempt.kind === 'host') return true      // host-not-ready / early exit is usually retriable
   if (attempt.kind === 'unknown') return true   // UI not settled is retriable
   // Only bundle-load flakes among UI failures count as transient
@@ -71,6 +75,7 @@ function isTransient(attempt): boolean {
 }
 ```
 
+- A host failure is **definitive** when the child died *and* its output carried a fail-loud boot marker (`plugin tree failed to load` etc.). A retry can only reproduce the same deterministic config error, so definitive failures are counted immediately instead of burning a tolerance retry.
 - Before every retry, the previous failed child has **already been killed** inside `bootAttempt` — a failed boot never leaks a process that holds the port.
 - Loop: `for (attempt = 0; attempt <= retries; attempt++)`; breaks when retries run out or a non-transient failure occurs.
 - `retriesExhausted` semantics: **true only when the tolerance retries were actually used up** (a genuine red screen is non-transient, so an early exit leaves it false).
@@ -112,7 +117,13 @@ for (attempt = 0; attempt <= retries; attempt++) {
 // Wrap-up: count and decide rollback
 if (kind === 'host' || kind === 'ui') {
   incrementFailure(...)             // same-kind +1, other kind reset; writes lastFailure
-  rolled = await maybeRollback(...) // see state-and-rollback.md
+  // A definitive host crash (process died + fail-loud marker) rolls back on the
+  // FIRST hit — it is a deterministic config error, not a flake — so its
+  // effective threshold is 1 regardless of the configured --threshold. Ambiguous
+  // failures keep the general same-kind threshold. The anti-loop fence and the
+  // Y/N confirmation (unless --yes) still gate the rollback as usual.
+  effectiveThreshold = kind === 'host' && definitive ? 1 : opts.threshold
+  rolled = await maybeRollback({ ..., threshold: effectiveThreshold })
   return { ok: false, ..., rolledBack, rollbackCancelled, retriesExhausted }
 }
 return { ok: false, failureKind: 'unknown', ... }   // unknown is not counted

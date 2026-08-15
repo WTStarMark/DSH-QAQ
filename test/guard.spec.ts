@@ -12,6 +12,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readState } from '../src/store.ts'
+import { recordSuccess } from '../src/rollback.ts'
+import { Logger } from '../src/log.ts'
 
 const { killMock, spawnDshMock, detectUiMock } = vi.hoisted(() => ({
   killMock: vi.fn(),
@@ -85,6 +87,60 @@ describe('guard.bootAttempt leak regression', () => {
       // never dropped as an uncounted 'unknown' UI timeout.
       expect(v.failureKind).toBe('host')
     }
+  })
+
+  it('classifies a host that dies while the stale page shows the red screen as host, not ui', async () => {
+    // The host bound the port, served the shell + JS bundle, and THEN died on the
+    // plugin tree — the browser still renders "Failed to load plugins". The child
+    // is dead (exitCode=1), so this must count as a HOST failure, never a UI one.
+    const sup = mkSupervisor()
+    sup.child = { exitCode: 1 }
+    sup.hasHostFailureMarker = () => true
+    spawnDshMock.mockReturnValue(sup)
+    detectUiMock.mockResolvedValue({ ok: false, kind: 'failed', bodyText: 'Failed to load plugins', failureDetail: 'web boot: 1 entry did not activate dsh-my-theme' })
+
+    const v = await superviseBoot({ home, command: ['fake'], cwd: '.', profile: 'web', retries: 0, uiTimeoutMs: 100, confirmGoodMs: 0 })
+
+    expect(v.ok).toBe(false)
+    if (!v.ok) {
+      expect(v.failureKind).toBe('host')
+      const state = readState(home)
+      expect(state.profiles['web'].hostFailures).toBe(1)
+      expect(state.profiles['web'].uiFailures).toBe(0)
+    }
+  })
+
+  it('rolls back on the FIRST definitive host crash instead of waiting out the threshold', async () => {
+    // Seed a last-good snapshot for the web profile.
+    recordSuccess(home, 'web', new Logger(home), join(home, 'profiles', 'web', 'package.json'), join(home, 'profiles', 'web', 'cordis.patch.yml'))
+    // Break the live profile config (a bad bundle/dependency was added).
+    writeFileSync(join(home, 'profiles', 'web', 'package.json'), JSON.stringify({ name: 'web', dependencies: { 'dsh-my-theme': 'link:D:/x' } }))
+
+    // Deterministic host crash: the child died with a fail-loud marker while the
+    // stale served page shows the red screen.
+    const sup = mkSupervisor()
+    sup.child = { exitCode: 1 }
+    sup.hasHostFailureMarker = () => true
+    spawnDshMock.mockReturnValue(sup)
+    detectUiMock.mockResolvedValue({ ok: false, kind: 'failed', bodyText: 'Failed to load plugins', failureDetail: 'Failed to load plugins' })
+
+    // A general threshold of 5 is configured, but a definitive crash overrides it to 1.
+    const v = await superviseBoot({ home, command: ['fake'], cwd: '.', profile: 'web', retries: 1, uiTimeoutMs: 100, confirmGoodMs: 0, autoConfirm: true, threshold: 5 })
+
+    expect(v.ok).toBe(false)
+    if (!v.ok) {
+      expect(v.failureKind).toBe('host')
+      expect(v.rolledBack).toBe(true)
+      // Deterministic: the tolerance retry was NOT burned on it.
+      expect(v.retriesExhausted).toBe(false)
+    }
+    // The live profile was restored to last-good (dsh-my-theme removed).
+    const restored = JSON.parse(readFileSync(join(home, 'profiles', 'web', 'package.json'), 'utf8'))
+    expect(restored.dependencies).toBeUndefined()
+    const state = readState(home)
+    expect(state.profiles['web'].hostFailures).toBe(1)
+    // Anti-loop fence armed so a still-broken restart cannot loop.
+    expect(state.profiles['web'].rolledBackAt).toBeDefined()
   })
 
   it('does not mark retriesExhausted when a genuine (non-transient) failure stops the loop early', async () => {

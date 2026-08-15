@@ -14,6 +14,7 @@ import { join, resolve, dirname } from 'node:path'
 import net from 'node:net'
 import { findBrowser as findBrowserFromCdp } from './cdp.ts'
 import { resolveDshHome } from './paths.ts'
+import { makeT, resolveLang, type Lang, type T } from './i18n.ts'
 
 export interface EnvReport {
   home: string
@@ -130,16 +131,17 @@ export { resolveDshHome } from './paths.ts'
  * The caller decides whether `error` problems are fatal (they are for the
  * supervised-launch path).
  */
-export async function preflight(inOpts?: { cwd?: string; port?: number }): Promise<EnvReport> {
+export async function preflight(inOpts?: { cwd?: string; port?: number; lang?: Lang }): Promise<EnvReport> {
   const port = inOpts?.port ?? 3080
+  const lang = inOpts?.lang ?? resolveLang([])
+  const t: T = makeT(lang)
   const { command, cwd, source, checkout, dshOnPath } = resolveCommand(inOpts?.cwd)
   const p: EnvProblem[] = []
 
   if (source === 'none') {
     p.push({
       sev: 'error', code: 'DSH_NOT_FOUND',
-      message: '找不到 dsh 命令，也没有发现 DeepSeek Harness 源码目录。',
-      hint: '请先安装 dsh 并把启动目录加入 PATH，或指定 --cwd 指向 DSH 源码目录；也可设置 QAQ_DSH_CMD。',
+      message: t('env.DSH_NOT_FOUND.msg'), hint: t('env.DSH_NOT_FOUND.hint'),
     })
   }
 
@@ -147,8 +149,7 @@ export async function preflight(inOpts?: { cwd?: string; port?: number }): Promi
   if (!browser) {
     p.push({
       sev: 'error', code: 'NO_BROWSER',
-      message: '没有找到 Chrome / Chromium / Edge，UI 红屏检测需要浏览器。',
-      hint: '请安装 Chrome 或 Edge（任选其一）。QAQ 不会改动你的浏览器数据。',
+      message: t('env.NO_BROWSER.msg'), hint: t('env.NO_BROWSER.hint'),
     })
   }
 
@@ -156,13 +157,12 @@ export async function preflight(inOpts?: { cwd?: string; port?: number }): Promi
   if (!free) {
     p.push({
       sev: 'error', code: 'PORT_BUSY',
-      message: '端口 ' + port + ' 已被占用。',
-      hint: '可能已有 dsh web 在运行。请先停掉它，或用 --port 指定其它端口。',
+      message: t('env.PORT_BUSY.msg', { port }), hint: t('env.PORT_BUSY.hint'),
     })
   }
 
   if (checkout && !findCheckoutCli(checkout)) {
-    p.push({ sev: 'warn', code: 'CHECKOUT_INCOMPLETE', message: '目录不是完整的 DSH checkout（缺少 CLI 入口）。', hint: '可能 DSH 依赖未安装或结构不完整。' })
+    p.push({ sev: 'warn', code: 'CHECKOUT_INCOMPLETE', message: t('env.CHECKOUT_INCOMPLETE.msg'), hint: t('env.CHECKOUT_INCOMPLETE.hint') })
   }
 
   return {
@@ -172,22 +172,24 @@ export async function preflight(inOpts?: { cwd?: string; port?: number }): Promi
 }
 
 /** Human-readable single-line summary of the preflight problems (for the banner). */
-export function problemBanner(report: EnvReport): string {
+export function problemBanner(report: EnvReport, lang: Lang = resolveLang([])): string {
+  const t: T = makeT(lang)
   const errs = report.problems.filter(x => x.sev === 'error')
   const warns = report.problems.filter(x => x.sev === 'warn')
   const out: string[] = []
-  for (const e of errs) out.push('[错误] ' + e.message + '   → ' + e.hint)
-  for (const w of warns) out.push('[提醒] ' + w.message + '   → ' + w.hint)
+  for (const e of errs) out.push(t('env.banner.error') + e.message + '   → ' + e.hint)
+  for (const w of warns) out.push(t('env.banner.warn') + w.message + '   → ' + w.hint)
   return out.join('\n')
 }
 
 /** Render the "what will be launched" summary for the pre-launch banner. */
-export function launchSummary(report: EnvReport): string {
+export function launchSummary(report: EnvReport, lang: Lang = resolveLang([])): string {
+  const t: T = makeT(lang)
   const parts: string[] = []
-  parts.push('启动命令: ' + report.command.join(' '))
-  parts.push('工作目录: ' + report.cwd)
-  parts.push('DSH 数据目录: ' + report.home)
-  if (report.browser) parts.push('检测用浏览器: ' + report.browser)
-  parts.push('端口: ' + report.port)
+  parts.push(t('env.launch.command') + report.command.join(' '))
+  parts.push(t('env.launch.cwd') + report.cwd)
+  parts.push(t('env.launch.home') + report.home)
+  if (report.browser) parts.push(t('env.launch.browser') + report.browser)
+  parts.push(t('env.launch.port') + report.port)
   return parts.join('\n')
 }

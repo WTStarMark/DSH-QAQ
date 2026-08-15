@@ -9,7 +9,7 @@ if not exist "node_modules" (
   pause
   exit /b 1
 )
-node --import tsx/esm src\cli.ts console %*
+node --import tsx/esm src\cli.ts console --lang en %*
 echo.
 echo [qaq] Guard console exited.
 pause

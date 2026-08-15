@@ -17,6 +17,7 @@ import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { profileDir } from './paths.ts'
 import { Logger } from './log.ts'
+import { makeT, type Lang, type T } from './i18n.ts'
 
 /** The dsh-qaq plugin package directory (this repo's packages/dsh-qaq). */
 export function findQaqPluginDir(): string {
@@ -28,23 +29,24 @@ export function findQaqPluginDir(): string {
 
 export interface InstallResult { ok: boolean; mounted: boolean; message: string }
 
-export function installPlugin(home: string, profile: string, log: Logger): InstallResult {
+export function installPlugin(home: string, profile: string, log: Logger, lang: Lang = 'zh'): InstallResult {
+  const t: T = makeT(lang)
   const plugin = findQaqPluginDir()
   const pkgPath = join(plugin, 'package.json')
-  if (!existsSync(pkgPath)) return { ok: false, mounted: false, message: '找不到 dsh-qaq 插件包：' + plugin }
+  if (!existsSync(pkgPath)) return { ok: false, mounted: false, message: t('plugin.notFound', { dir: plugin }) }
   const pluginPkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name: string }
   const name = pluginPkg.name
-  if (!name) return { ok: false, mounted: false, message: 'dsh-qaq package.json 缺少 name' }
+  if (!name) return { ok: false, mounted: false, message: t('plugin.noName') }
 
   const pr = profileDir(home, profile)
   const pjPath = join(pr, 'package.json')
-  if (!existsSync(pjPath)) return { ok: false, mounted: false, message: 'profile ' + profile + ' 尚未初始化（目录 ' + pr + '）。' }
+  if (!existsSync(pjPath)) return { ok: false, mounted: false, message: t('plugin.noProfile', { name: profile, dir: pr }) }
 
   // Keep the original so a failed step below can roll the profile back to
   // byte-identical content — a half-mounted plugin must never break the boot.
   const originalPkg = readFileSync(pjPath, 'utf8')
   let pkg: { dsh?: { profile?: { bundles?: unknown } }; dependencies?: Record<string, unknown> }
-  try { pkg = JSON.parse(originalPkg) } catch { return { ok: false, mounted: false, message: 'profile package.json 无法解析' } }
+  try { pkg = JSON.parse(originalPkg) } catch { return { ok: false, mounted: false, message: t('plugin.badJson') } }
   const bundles = (pkg.dsh?.profile?.bundles ?? []) as string[]
   const already = bundles.includes(name)
   if (!already) {
@@ -62,7 +64,7 @@ export function installPlugin(home: string, profile: string, log: Logger): Insta
     try {
       const patchText = readFileSync(patchPath, 'utf8')
       if (patchText.includes('id: ' + name) || patchText.includes('id:' + name)) {
-        log.warn('检测到 ' + profile + '/cordis.patch.yml 中仍有 ' + name + ' 的手动 insert 行。bundle 机制会自动加载该插件，残留行会导致 duplicate entry 启动失败，请手动删除该行。')
+        log.warn(t('plugin.staleInsert', { name, profile }))
       }
     } catch { /* best effort */ }
   }
@@ -81,8 +83,8 @@ export function installPlugin(home: string, profile: string, log: Logger): Insta
   // link it, undo the manifest write so the profile stays loadable (never
   // create the very boot failure this tool exists to guard against).
   if (linkFailed) {
-    log.warn('无法建立 node_modules 链接：' + name + '（' + nmDir + '）；已撤销 manifest 写入，profile 未受影响。')
-    return { ok: false, mounted: false, message: '无法将 dsh-qaq 链接进 profile 的 node_modules（' + nmDir + '），已撤销本次修改。请检查权限后重试。' }
+    log.warn(t('plugin.linkFailed', { name, dir: nmDir }))
+    return { ok: false, mounted: false, message: t('plugin.linkFailedResult', { dir: nmDir }) }
   }
 
   // Apply the manifest write atomically: on failure, restore the original.
@@ -90,11 +92,11 @@ export function installPlugin(home: string, profile: string, log: Logger): Insta
     if (!already) writeFileSync(pjPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8')
   } catch {
     try { writeFileSync(pjPath, originalPkg, 'utf8') } catch { /* best effort */ }
-    log.error('写入 profile manifest 失败，已回滚原始内容：' + name)
-    return { ok: false, mounted: false, message: '写入 profile manifest 失败（' + pjPath + '），已回滚。请检查磁盘/权限后重试。' }
+    log.error(t('plugin.writeFailed', { name }))
+    return { ok: false, mounted: false, message: t('plugin.writeFailedResult', { path: pjPath }) }
   }
 
-  log.info('dsh-qaq 插件已挂载到 profile ' + profile + (already ? '（此前已挂载）' : '') + '（bundle layer）；下次干净启动会自动写 last-good 快照。')
+  log.info(t('plugin.mountedLog', { name: profile, already: already ? t('plugin.already') : '' }))
   log.access('dsh-qaq plugin mounted on profile ' + profile + (already ? ' (already)' : ''), { profile, action: 'install-plugin', already })
-  return { ok: true, mounted: true, message: '插件已挂载到 profile ' + profile + '（bundle layer），目录：' + pr }
+  return { ok: true, mounted: true, message: t('plugin.mountedResult', { name: profile, dir: pr }) }
 }

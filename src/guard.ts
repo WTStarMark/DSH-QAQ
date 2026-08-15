@@ -54,8 +54,10 @@ export interface BootHealthy {
 
 export type BootVerdict = BootHealthy | BootFailure
 
-/** One unattributed boot attempt: returns a raw verdict WITHOUT counting/rollback. */
-type AttemptResult = { kind: 'host' | 'ui' | 'unknown'; error: string; killed: boolean } | { kind: 'ok'; error: string; supervisor: DshSupervisor }
+/** One unattributed boot attempt: returns a raw verdict WITHOUT counting/rollback.
+ * `definitive` is set on a host failure where the child died with a fail-loud
+ * boot marker (a deterministic config error — retrying cannot help). */
+type AttemptResult = { kind: 'host' | 'ui' | 'unknown'; error: string; killed: boolean; definitive?: boolean } | { kind: 'ok'; error: string; supervisor: DshSupervisor }
 async function bootAttempt(opts: GuardOptions): Promise<AttemptResult> {
   const home = opts.home ?? resolveDshHome()
   const port = opts.port ?? 3080
@@ -80,7 +82,7 @@ async function bootAttempt(opts: GuardOptions): Promise<AttemptResult> {
     const code = await Promise.race([supervision.exit, sleep(1500)]) as (number | null | undefined)
     supervision.kill()
     const detail = hostError ?? ('host not ready on port ' + port)
-    return { kind: 'host', error: detail + (code === undefined ? '' : ' exit=' + code), killed: true }
+    return { kind: 'host', error: detail + (code === undefined ? '' : ' exit=' + code), killed: true, definitive: supervision.hasHostFailureMarker() }
   }
 
   let ui
@@ -91,6 +93,17 @@ async function bootAttempt(opts: GuardOptions): Promise<AttemptResult> {
   }
 
   if (ui.kind === 'failed') {
+    // A crashed host can still leave a served page that renders the red screen:
+    // the server bound the port, served the HTML shell + JS bundle, and THEN died
+    // on the plugin tree. So a red screen alone must not mask a host death —
+    // check the child's liveness here too, or the crash is counted as a UI
+    // failure and the rollback decision ignores the dead process.
+    if (supervision.child.exitCode !== null || supervision.hasHostFailureMarker()) {
+      const marker = supervision.hasHostFailureMarker() ? '; fail-loud marker in output' : ''
+      const code = supervision.child.exitCode
+      supervision.kill()
+      return { kind: 'host', error: 'host exited with UI red screen (code=' + code + ')' + marker, killed: true, definitive: supervision.hasHostFailureMarker() }
+    }
     supervision.kill()
     return { kind: 'ui', error: ui.failureDetail ?? 'Failed to load plugins', killed: true }
   }
@@ -104,7 +117,7 @@ async function bootAttempt(opts: GuardOptions): Promise<AttemptResult> {
       const marker = supervision.hasHostFailureMarker() ? '; fail-loud marker in output' : ''
       const code = supervision.child.exitCode
       supervision.kill()
-      return { kind: 'host', error: 'host exited during UI probe (code=' + code + ')' + marker, killed: true }
+      return { kind: 'host', error: 'host exited during UI probe (code=' + code + ')' + marker, killed: true, definitive: supervision.hasHostFailureMarker() }
     }
     // Neither healthy nor failed within the UI timeout. Always kill: a live child
     // left behind would hold the port during a retry (EADDRINUSE) and would keep
@@ -118,7 +131,10 @@ async function bootAttempt(opts: GuardOptions): Promise<AttemptResult> {
 }
 
 /** Whether a boot failure looks transient (retriable) rather than a genuine misconfiguration. */
-function isTransient(attempt: { kind: string; error: string }): boolean {
+function isTransient(attempt: { kind: string; error: string; definitive?: boolean }): boolean {
+  // A host that died with a fail-loud boot marker (plugin tree failed to load)
+  // is deterministic — a retry can only reproduce it, so count it immediately.
+  if (attempt.definitive) return false
   if (attempt.kind === 'host') return true // host-not-ready / early exit is typically a flake or env issue; retry once
   if (attempt.kind === 'unknown') return true
   // A bundle-load "did not activate" that is NOT a service-inject pending is a load flake.
@@ -153,9 +169,10 @@ export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
         return { ok: true, supervisor: last.supervisor!, url }
       }
       // The boot did not stay healthy during the confirmation window — treat
-      // this attempt as a failure and continue (retry or count).
+      // this attempt as a failure and continue (retry or count). A host death
+      // here with a fail-loud marker is just as definitive as in bootAttempt.
       last.supervisor!.kill()
-      last = { kind: confirmed.kind, error: confirmed.error, killed: true }
+      last = { kind: confirmed.kind, error: confirmed.error, killed: true, definitive: confirmed.kind === 'host' && last.supervisor!.hasHostFailureMarker() }
     }
     if (attempt < retries && isTransient(last)) {
       log.warn('transient boot failure (kind=' + last.kind + '): ' + last.error + '; retrying (' + (retries - attempt) + ' left)')
@@ -172,7 +189,11 @@ export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
   log.error((kind === 'ui' ? 'UI red screen: ' : 'boot failed: ') + lastOk.error)
   if (kind === 'host' || kind === 'ui') {
     incrementFailure(home, profile, kind, lastOk.error, log)
-    const rolled = await maybeRollback({ home, profile, kind, autoConfirm: opts.autoConfirm ?? false, log, threshold: opts.threshold })
+    // A definitive host crash (process died with a fail-loud boot marker) is a
+    // deterministic config error: roll back on the first hit instead of waiting
+    // out the general same-kind threshold.
+    const effectiveThreshold = kind === 'host' && lastOk.definitive ? 1 : opts.threshold
+    const rolled = await maybeRollback({ home, profile, kind, autoConfirm: opts.autoConfirm ?? false, log, threshold: effectiveThreshold })
     return {
       ok: false, failureKind: kind, error: lastOk.error,
       rolledBack: rolled.restored, rollbackCancelled: rolled.cancelled,
@@ -188,7 +209,8 @@ async function confirmStable(supervisor: DshSupervisor, url: string, opts: Guard
   log.info('host + UI healthy; confirming for ' + confirmMs + 'ms')
   await sleep(confirmMs)
   if (supervisor.child.exitCode !== null) {
-    return { ok: false, kind: 'host', error: 'process exited during confirmation window (code=' + supervisor.child.exitCode + ')' }
+    const marker = supervisor.hasHostFailureMarker() ? '; fail-loud marker in output' : ''
+    return { ok: false, kind: 'host', error: 'process exited during confirmation window (code=' + supervisor.child.exitCode + ')' + marker }
   }
   // Re-probe the real DOM to verify the UI is still healthy (stable, no red screen).
   // Clamp the probe budget to >= 1ms: a 0 confirm window must still re-read the DOM once.

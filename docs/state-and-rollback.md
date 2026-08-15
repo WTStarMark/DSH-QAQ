@@ -80,6 +80,8 @@ $DSH_HOME/.qaq/                  # qaqDir(home)
 
 ```
 threshold: same-kind count < threshold (default 3) → do not trigger
+  (exception: a definitive host crash — child death + fail-loud boot marker —
+   is passed an effective threshold of 1, so it rolls back on the first hit)
 anti-loop fence: rolledBackAt within the last 5 minutes → do not trigger (guide manual fix)
 last-good resolution:
   prefer state.lastGoodSnapshot (history/<ts>)

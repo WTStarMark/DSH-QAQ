@@ -65,7 +65,7 @@ Global: `--yes` auto-confirms rollbacks.
 
 ## One-click console (`qaq console` / `bin\qaq-web.cmd`)
 
-A menu in a visible CMD window. The console UI is currently Chinese; the items correspond to:
+A menu in a visible CMD window. The console is **bilingual**: `bin\qaq-web.cmd` shows English, `bin\qaq-web.zh.cmd` shows Chinese; a bare `qaq console` defaults to Chinese (`--lang en` or `$QAQ_LANG=en` switches). The menu items correspond to:
 
 ```
 [1] Start the guard (take over dsh web)  — supervised launch (fresh preflight each time)
@@ -153,13 +153,14 @@ Every record is one JSON line (`{ ts, level, cat, phase?, msg, ...meta }`) so th
 ## Trigger & anti-loop
 
 - **3** consecutive failures of the same kind (host or UI) trigger a rollback.
+- **Exception — definitive host crash**: when the child process dies *and* its output carries a fail-loud boot marker (`plugin tree failed to load` etc.), it is a deterministic config error: QAQ rolls back on the **first** hit (effective threshold 1) instead of waiting for 3 manual runs. The anti-loop fence and the Y/N confirmation (unless `--yes`) still apply.
 - Confirmation is required by default (`Y/N`); `--yes` makes it fully automatic.
 - **Declining the confirmation stops the guard without auto-restart**: the broken config is left in place (preserved under `rolled-back/` too) for manual recovery — the guard never restarts with an auto-confirmed rollback behind your back.
 - After a rollback a **5-minute anti-loop fence** stops repeated auto-restarts if the restart still fails; the user is pointed at `rolled-back/`.
 
 ## Reliability features
 
-- **Transient-failure retry** (`retries=1`): suspected one-off flakes (host not ready, a client bundle that transiently fails to load) are retried once and not counted, so a Windows EBUSY does not corrupt the strike counter. Every retried attempt kills its child first, so a failed boot never leaks a process that would hold the port or hang the guard.
+- **Transient-failure retry** (`retries=1`): suspected one-off flakes (host not ready, a client bundle that transiently fails to load) are retried once and not counted, so a Windows EBUSY does not corrupt the strike counter. A **definitive host crash** (death + fail-loud marker) is not retried — a retry only reproduces the same deterministic error — and it rolls back on the first hit. Every retried attempt kills its child first, so a failed boot never leaks a process that would hold the port or hang the guard.
 - **Confirmation-window re-probe**: after the first healthy DOM probe, the boot must stay stable for `--confirm-ms`, then the real DOM is probed once more before a last-good snapshot is written — a boot that degrades right after first health is never recorded as good.
 - **PID-aware guard lock**: a stale lock left by a crashed guard is auto-reclaimed on the next run.
 - **Rollback diff preview**: prints the config diff (current vs. last-good) before `Y/N`.
@@ -213,6 +214,22 @@ Developer-oriented deep-dives for secondary development:
 | [testing.md](docs/testing.md) | unit-test matrix, smoke, real-DSH integration, fault injection |
 
 > Chinese versions: `docs/*.zh.md` (default-named files are English).
+
+## Contributing
+
+Contributions are welcome — bug reports, feature requests, and pull requests all help make QAQ better.
+
+**Report a bug / request a feature**: open an [issue](https://github.com/<your-account>/QAQ/issues) with reproduction steps (excerpts from `~/.dsh/.qaq/log/access.log` and `error.log` go a long way) and your environment (OS, Node version).
+
+**Send a pull request**:
+
+1. Fork the repository and create a feature branch.
+2. Set up locally: `pnpm install` (Node 22+, pnpm 11 — see `.nvmrc`).
+3. Make your change **with tests** — [testing.md](docs/testing.md) explains what each spec covers and how to add cases.
+4. Run the gates: `pnpm typecheck` && `pnpm test` && `pnpm build` (CI enforces these on Ubuntu + Windows).
+5. Open the PR with a short description of what changed and why.
+
+Orientation: start with [architecture.md](docs/architecture.md), then the topic documents under `docs/`.
 
 ## License
 

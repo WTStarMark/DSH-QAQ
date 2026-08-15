@@ -16,7 +16,8 @@ import { superviseBoot, type GuardOptions } from './guard.ts'
 import { openConsole } from './console.ts'
 import { installPlugin } from './install-plugin.ts'
 import { preflight } from './env.ts'
-import { maybeRollback, manualBackup, manualRestore, isUsable } from './rollback.ts'
+import { manualBackup, manualRestore, isUsable } from './rollback.ts'
+import { makeT, resolveLang, type Lang } from './i18n.ts'
 
 interface CliArgs {
   mode: 'dsh' | 'status' | 'backup' | 'restore' | 'reset' | 'console' | 'install-plugin' | 'help'
@@ -28,9 +29,12 @@ interface CliArgs {
   uiTimeoutMs?: number
   threshold?: number
   cwd?: string
+  lang: Lang
 }
 
-const USAGE = `
+function usage(lang: Lang): string {
+  const t = makeT(lang)
+  return `
 qaq — DeepSeek Harness launch resilience guard
 Usage:
   qaq dsh web [--port N] [--yes] [opts]     supervise 'dsh web' (host/UI detect, rollback, restart)
@@ -38,16 +42,18 @@ Usage:
   qaq backup [--profile <name>]            snapshot the current profile as last-good
   qaq restore --to <snapDir> [--profile <name>]  restore a profile from a snapshot dir
   qaq reset --profile <name>               zero the failure counters
-  qaq console                             open the interactive menu (懒人脚本)
-  qaq install-plugin [--profile <name>]   auto-mount dsh-qaq backup plugin
+  qaq console                             ${t('cli.usage.console')}
+  qaq install-plugin [--profile <name>]   ${t('cli.usage.installPlugin')}
 Globals:
   --yes                                     auto-confirm rollbacks
+  --lang en|zh                              console/preflight language (default zh; or \$QAQ_LANG)
 dsh web options:
   --confirm-ms <ms>    stable-healthy confirmation window before snapshot (default 20000)
   --ui-timeout <ms>    max wait for the UI to settle during the L3 probe (default 25000)
   --threshold <n>      consecutive failures that trigger a rollback (default 3)
   --cwd <dir>          working directory for the supervised dsh (default: this process cwd)
 `
+}
 
 function parseCli(argv: string[]): CliArgs {
   const yes = argv.includes('--yes')
@@ -60,8 +66,9 @@ function parseCli(argv: string[]): CliArgs {
   const uiTimeoutMs = num('--ui-timeout')
   const threshold = num('--threshold')
   const cwd = val('--cwd')
+  const lang = resolveLang(rest)
 
-  const base = { yes, port, confirmMs, uiTimeoutMs, threshold, cwd }
+  const base = { yes, port, confirmMs, uiTimeoutMs, threshold, cwd, lang }
   if (first === 'status') return { mode: 'status', profile: val('--profile') ?? 'web', ...base }
   if (first === 'backup') return { mode: 'backup', profile: val('--profile') ?? 'web', ...base }
   if (first === 'restore') return { mode: 'restore', profile: val('--profile') ?? 'web', restoreTo: val('--to'), ...base }
@@ -76,7 +83,7 @@ function parseCli(argv: string[]): CliArgs {
 async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2))
   switch (args.mode) {
-    case 'help': process.stdout.write(USAGE); return
+    case 'help': process.stdout.write(usage(args.lang)); return
     case 'status': return cmdStatus(args.profile)
     case 'backup': return cmdBackup(args.profile)
     case 'restore':
@@ -84,7 +91,7 @@ async function main(): Promise<void> {
       return cmdRestore(args.profile, args.restoreTo)
     case 'reset': return cmdReset(args.profile)
     case 'console': return cmdConsole(args)
-    case 'install-plugin': return cmdInstallPlugin(args.profile)
+    case 'install-plugin': return cmdInstallPlugin(args.profile, args.lang)
     case 'dsh': return cmdDsh(args)
   }
 }
@@ -127,12 +134,13 @@ function cmdConsole(args: CliArgs): Promise<void> {
   return openConsole(args.profile, {
     yes: args.yes, port: args.port,
     confirmMs: args.confirmMs, uiTimeoutMs: args.uiTimeoutMs, threshold: args.threshold,
+    lang: args.lang,
   })
 }
 
-function cmdInstallPlugin(profile: string): void {
+function cmdInstallPlugin(profile: string, lang: Lang): void {
   const home = resolveDshHome(); const log = new Logger(home)
-  const r = installPlugin(home, profile, log)
+  const r = installPlugin(home, profile, log, lang)
   log.access('install-plugin result for profile ' + profile + ': ' + r.message, { profile, action: 'install-plugin', ok: r.ok })
   process.stdout.write((r.ok ? '[qaq] ' : '[qaq][error] ') + r.message + '\n')
 }
@@ -140,13 +148,14 @@ function cmdInstallPlugin(profile: string): void {
 async function cmdDsh(args: CliArgs): Promise<void> {
   const home = resolveDshHome(); const log = new Logger(home)
   const port = args.port ?? 3080
+  const t = makeT(args.lang)
 
-  const report = await preflight({ cwd: args.cwd, port })
+  const report = await preflight({ cwd: args.cwd, port, lang: args.lang })
   const fatal = report.problems.filter(function (x) { return x.sev === 'error' })
   if (fatal.length) {
-    log.error('启动前自检未通过：')
+    log.error(t('cli.fatal.title'))
     for (const f of fatal) log.error('  ' + f.message + ' -> ' + f.hint)
-    log.error('可尝试：qaq console 打开交互式控制台，或设置 QAQ_DSH_CMD / --cwd。')
+    log.error(t('cli.fatal.hint'))
     return
   }
 

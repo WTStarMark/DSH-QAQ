@@ -26,7 +26,7 @@ Related: [Architecture Overview](architecture.md) · [Guard Lifecycle](guard-lif
 
 ### 1.3 `preflight` self-check
 
-| Check | Level | Failure hint (Chinese UI) |
+| Check | Level | Failure hint (localized `en`/`zh` via `--lang` / `$QAQ_LANG`) |
 |-------|-------|---------------------------|
 | dsh command exists (source != 'none') | error | dsh not found / no source dir → install dsh / --cwd / QAQ_DSH_CMD |
 | Chrome/Chromium/Edge exists | error | install Chrome or Edge (required for UI detection) |
@@ -38,6 +38,10 @@ Related: [Architecture Overview](architecture.md) · [Guard Lifecycle](guard-lif
 ---
 
 ## 2. Interactive console (src/console.ts)
+
+### 2.0 Language (src/i18n.ts)
+
+The whole user-facing surface (console menu, preflight problems, install-plugin results, CLI usage/fatal hints) is localized via a small dictionary (`en` / `zh`, keys like `console.menu.1`, `env.PORT_BUSY.msg`, `plugin.mountedResult`; `{var}` interpolation). Resolution order: `--lang en|zh` → `$QAQ_LANG` → default `zh` (the original behavior). The launchers pin it: `bin\qaq-web.cmd` passes `--lang en`, `bin\qaq-web.zh.cmd` passes `--lang zh`. New strings must be added to **both** dictionaries or they fall back to the key itself.
 
 ### 2.1 Menu
 
@@ -99,7 +103,7 @@ DSH resolves each `dsh.profile.bundles` entry in order, reads its `dsh.bundle.pa
 | File | Purpose |
 |------|---------|
 | `qaq-install.cmd` / `qaq-install.zh.cmd` | one-click install: check Node >= 22 → pnpm deps (npx fallback) → esbuild build → verify the artifact |
-| `qaq-web.cmd` / `qaq-web.zh.cmd` | double-click opens the lazy launcher console: check node_modules → `node --import tsx/esm src\cli.ts console` |
+| `qaq-web.cmd` / `qaq-web.zh.cmd` | double-click opens the lazy launcher console: check node_modules → `node --import tsx/esm src\cli.ts console --lang en` / `--lang zh` |
 | `qaq.cmd` | pass-through wrapper (`qaq <args>`) |
 | `qaq.mjs` | Node entry: uses dist when present, otherwise runs the source via tsx (`import.meta.url`-relative) |
 
@@ -109,6 +113,7 @@ DSH resolves each `dsh.profile.bundles` entry in order, reads its `dsh.bundle.pa
 
 ## 5. Modification guide
 
-- New menu item → edit the `runConsole` switch and the menu print; result-style actions use `lastNotice`, detail-style actions end with an Enter-to-return prompt.
+- New menu item → edit the `runConsole` switch and the menu print (both localized via `i18n.ts`); result-style actions use `lastNotice`, detail-style actions end with an Enter-to-return prompt.
+- New/changed user-facing string → add the key to **both** `en` and `zh` in `src/i18n.ts`; `test/i18n.spec.ts` covers `--lang` precedence, `$QAQ_LANG`, and interpolation.
 - Discovery changes → touch only `env.ts`; `test/env.spec.ts` covers QAQ_DSH_CMD / --cwd / the sibling scan.
 - Plugin mounting → `install-plugin.ts` + `test/install-plugin.spec.ts` (idempotency + "user patch untouched" assertions).

@@ -64,7 +64,7 @@ qaq dsh web --port 3080 --yes
 
 ## 一键控制台（`qaq console` / `bin\qaq-web.zh.cmd`）
 
-可见 CMD 窗口里的中文菜单：
+可见 CMD 窗口里的菜单。控制台**双语**：`bin\qaq-web.zh.cmd` 显示中文，`bin\qaq-web.cmd` 显示英文；直接 `qaq console` 默认中文（可用 `--lang en` 或 `$QAQ_LANG=en` 切换）：
 
 ```
 [1] 一键启动守卫（接管 dsh web）    — 每次启动前重新自检
@@ -152,13 +152,14 @@ qaq dsh web --port 3080 --yes
 ## 触发与防死循环
 
 - 连续 **3** 次同类（host 或 ui）失败 -> 触发回滚。
+- **例外——确定性宿主崩溃**：子进程死亡且输出带启动失败标记（`plugin tree failed to load` 等）属于确定的配置错误，**首次命中即回滚**（有效阈值 1，不再等 3 次），无需重复手动启动。防死循环栅栏与 Y/N 确认（除非 `--yes`）仍然生效。
 - 默认需用户在窗口确认（Y/N）；`--yes` 全自动。
 - **拒绝确认即停手，不自动重启**：坏配置保留原位（同时备份到 `rolled-back/`）供手动还原——守卫绝不会在你背后用 autoConfirm 重启来强行回滚。
 - 回滚后进入 **5 分钟防死循环栅栏**：窗口内再次失败即停手，指引人工检查 `rolled-back/`。
 
 ## 可靠性增强
 
-- **瞬态失败重试**（`retries=1`）：对疑似瞬时错误（host 未就绪 / bundle 脚本加载失败）自动重试一次，不计入失败计数，避免 Windows 偶发 EBUSY 误伤。每次重试前会先杀掉上一次的子进程——失败启动绝不会泄漏进程占住端口或挂住守卫。
+- **瞬态失败重试**（`retries=1`）：对疑似瞬时错误（host 未就绪 / bundle 脚本加载失败）自动重试一次，不计入失败计数，避免 Windows 偶发 EBUSY 误伤。**带失败标记的确定性宿主崩溃不重试**（重试只会复现同样的错误），直接计数并首次即回滚。每次重试前会先杀掉上一次的子进程——失败启动绝不会泄漏进程占住端口或挂住守卫。
 - **确认窗口复查**：首次健康 DOM 探测后，启动需稳定经过 `--confirm-ms`，随后再对真实 DOM 复查一次才写 last-good 快照——首次健康后立即劣化的启动绝不会被记为 good。
 - **PID 感知守卫锁**：崩溃残留的陈旧锁在下一次运行自动回收，避免「假占用」。
 - **回滚 diff 预览**：Y/N 确认前打印当前配置与 last-good 的差异。
@@ -212,6 +213,22 @@ CI（`.github/workflows/ci.yml`）在 **ubuntu-latest** 与 **windows-latest**�
 | [testing.zh.md](docs/testing.zh.md) | 测试与真实集成：单测矩阵、smoke、故障注入 |
 
 > 英文版见 `docs/*.md`（默认命名）。
+
+## 参与贡献
+
+欢迎一切形式的贡献——Bug 报告、功能建议与 Pull Request 都能让 QAQ 变得更好。
+
+**报 Bug / 提需求**：在 [Issues](https://github.com/<你的账户>/QAQ/issues) 提交，附上复现步骤（`~/.dsh/.qaq/log/access.log` 与 `error.log` 的关键片段最有帮助）和你的环境（操作系统、Node 版本）。
+
+**提交 Pull Request**：
+
+1. Fork 本仓库并创建功能分支。
+2. 本地准备：`pnpm install`（Node 22+、pnpm 11——见 `.nvmrc`）。
+3. 修改并**补测试**——见 [testing.zh.md](docs/testing.zh.md) 了解各 spec 覆盖点与新增用例的方式。
+4. 通过门禁：`pnpm typecheck`、`pnpm test`、`pnpm build`（CI 会在 Ubuntu 与 Windows 上强制执行）。
+5. 开 PR，附上简短说明：改了什么、为什么。
+
+入门指引：先读 [architecture.zh.md](docs/architecture.zh.md)，再深入 `docs/` 下各专项文档。
 
 ## License
 
