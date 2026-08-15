@@ -57,7 +57,10 @@ function createAsker(rl: readline.Interface): (prompt: string) => Promise<string
     else queue.push(value)
   })
   rl.on('close', () => {
-    if (waiter) { const w = waiter; waiter = null; w('q') } // EOF -> quit
+    // EOF (piped/redirected stdin): resolve an in-flight prompt as quit, or
+    // enqueue 'q' so the next prompt quits cleanly with the exit message.
+    if (waiter) { const w = waiter; waiter = null; w('q') }
+    else queue.push('q')
   })
   return (prompt: string): Promise<string> => {
     process.stdout.write(prompt)
@@ -170,10 +173,8 @@ async function runLaunch(home: string, report: EnvReport, profile: string, opts:
   }
 }
 
-async function runConsole(home: string, profile: string, opts: ConsoleOpts, ask: (p: string) => Promise<string>): Promise<void> {
-  const report = await preflight({ port: opts.port })
-
-  // banner
+/** The persistent header re-printed after every screen clear. */
+function printHeader(report: EnvReport): void {
   process.stdout.write('\n');
   process.stdout.write(c(BOLD, '┌──────────────────────────────────────────────┐') + '\n');
   process.stdout.write(c(BOLD, '│   QAQ — DeepSeek Harness 启动容灾守卫控制台    │') + '\n');
@@ -181,10 +182,23 @@ async function runConsole(home: string, profile: string, opts: ConsoleOpts, ask:
   process.stdout.write(launchSummary(report).split('\n').map(x => '  ' + x).join('\n') + '\n');
   if (report.problems.length) process.stdout.write(c(YEL, problemBanner(report)) + '\n');
   process.stdout.write('\n');
+}
 
+async function runConsole(home: string, profile: string, opts: ConsoleOpts, ask: (p: string) => Promise<string>): Promise<void> {
+  const report = await preflight({ port: opts.port })
+
+  // One screen at a time: clear before every menu so the window never stacks
+  // stale menus/output (the header is re-printed each time). No-op on non-TTY.
+  const clearScreen = (): void => { if (process.stdout.isTTY) process.stdout.write('\x1b[2J\x1b[3J\x1b[H') }
+
+  let lastNotice = ''
   let running = true;
   while (running) {
-    process.stdout.write('\n' + c(BOLD, '主菜单') + '（profile ' + profile + '）\n');
+    clearScreen();
+    printHeader(report);
+    if (activeGuard) process.stdout.write(c(CYN, '🛡 守卫监控中：dsh web 正在后台运行（回车 [1] 会被拒绝，等待其退出即可）') + '\n\n');
+    if (lastNotice) process.stdout.write(c(GRN, '✔ ' + lastNotice) + '\n\n');
+    process.stdout.write(c(BOLD, '主菜单') + '（profile ' + profile + '）\n');
     process.stdout.write('  ' + c(CYN, '[1]') + ' 一键启动守卫（接管 dsh web）\n');
     process.stdout.write('  ' + c(CYN, '[2]') + ' 查看状态\n');
     process.stdout.write('  ' + c(CYN, '[3]') + ' 手动备份当前配置为 last-good\n');
@@ -196,10 +210,14 @@ async function runConsole(home: string, profile: string, opts: ConsoleOpts, ask:
     const choice = await ask(c(YEL, '请选择: '));
     switch (choice) {
       case '1': case 'l': case 'launch': await runLaunch(home, report, profile, opts, ask); break
-      case '2': case 's': case 'status': printState(home, profile); break
+      case '2': case 's': case 'status': {
+        printState(home, profile);
+        await ask('\n[回车返回菜单] ');
+        break
+      }
       case '3': case 'b': case 'backup': {
         manualBackup(home, profile, new Logger(home));
-        process.stdout.write(c(GRN, '已备份当前配置为 last-good。') + '\n');
+        lastNotice = '已备份当前配置为 last-good。';
         break
       }
       case '4': case 'r': case 'restore': {
@@ -207,10 +225,10 @@ async function runConsole(home: string, profile: string, opts: ConsoleOpts, ask:
         const p = profileState(state, profile);
         const good = p.lastGoodSnapshot ? join(qaqDir(home), p.lastGoodSnapshot.startsWith('history/') ? p.lastGoodSnapshot : 'history/' + p.lastGoodSnapshot) : null;
         const usable = good && isUsable(good);
-        if (!usable) { process.stdout.write(c(YEL, '尚无 last-good 快照可用，请先备份或成功启动一次。') + '\n'); break }
+        if (!usable) { lastNotice = '尚无 last-good 快照可用，请先备份或成功启动一次。'; break }
         const confirm = await ask(c(YEL, '确认将 profile 回滚到 last-good？') + ' (y/N) ');
-        if (confirm.startsWith('y')) { manualRestore(home, profile, good!, new Logger(home)); process.stdout.write(c(GRN, '已回滚。') + '\n') }
-        else process.stdout.write('已取消。\n');
+        if (confirm.startsWith('y')) { manualRestore(home, profile, good!, new Logger(home)); lastNotice = '已回滚到 last-good。' }
+        else lastNotice = '已取消。';
         break;
       }
       case '5': case 'reset': {
@@ -218,12 +236,12 @@ async function runConsole(home: string, profile: string, opts: ConsoleOpts, ask:
         p.hostFailures = 0; p.uiFailures = 0; delete p.lastFailure;
         await import('./store.ts').then(m => m.writeState(home, state));
         new Logger(home).access('reset counters via console for profile ' + profile, { profile, action: 'reset' });
-        process.stdout.write(c(GRN, '已清零失败计数。') + '\n');
+        lastNotice = '已清零失败计数。';
         break;
       }
       case '6': case 'i': case 'install': {
         const r = installPlugin(home, profile, new Logger(home));
-        process.stdout.write(c(GRN, r.message) + '\n');
+        lastNotice = r.message;
         break;
       }
       case '7': case 'v': case 'logs': {
@@ -234,13 +252,16 @@ async function runConsole(home: string, profile: string, opts: ConsoleOpts, ask:
         tailFile(join(logDir, 'access.log'));
         process.stdout.write('\n' + c(BOLD, '—— host.log（最近）——') + '\n');
         tailFile(join(logDir, 'host.log'), 3000);
+        await ask('\n[回车返回菜单] ');
         break;
       }
       case 'q': case 'quit': case 'exit': running = false; break;
-      default: process.stdout.write(c(YEL, '未知选项，请重试。') + '\n');
+      default: lastNotice = '未知选项，请重试。';
     }
   }
-  process.stdout.write(c(BOLD, '\n守卫控制台已退出。有问题请查看 ' + join(qaqDir(home), 'log') + ' 目录，或查看 README。') + '\n');
+  clearScreen();
+  printHeader(report);
+  process.stdout.write(c(BOLD, '守卫控制台已退出。有问题请查看 ' + join(qaqDir(home), 'log') + ' 目录，或查看 README。') + '\n');
 }
 
 /** Entry point: open the interactive console. */

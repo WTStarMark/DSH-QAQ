@@ -77,6 +77,8 @@ A Chinese-language menu in a visible CMD window:
 
 While a supervised `dsh web` is running, the guard lock is held until it exits (a second launch is refused and a stale port check can never misfire); Ctrl+C kills the supervised child so no process is left holding the port.
 
+The console clears the screen before every menu render — the window always shows one screen (persistent header + last action result + menu) instead of stacking stale output. Detailed views (status / logs) pause with `[回车返回菜单]`.
+
 ## Operations guide (操作指南)
 
 ### First-time setup (Windows)
