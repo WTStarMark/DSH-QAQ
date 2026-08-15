@@ -44,7 +44,7 @@
 - 触发：`qaq.log → qaq.1.log → qaq.2.log …`，超出 5 份删除最旧的。
 - 实现：`sizes`/`lastCheck` 做增量字节跟踪（约每 64KB 才 stat 一次），`rotateFile` 用
   `renameSync` 递推 + 正则清理超龄副本。
-- **轮转是 best-effort，任何异常都被吞掉，绝不影响业务**。
+- **轮转是尽力而为的**：任何异常都被吞掉，绝不影响业务。
 
 ---
 

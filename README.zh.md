@@ -20,7 +20,7 @@ DSH Web 存在一种「宿主活、UI 红屏」的失败模式：宿主进程正
 
 ## 安装 / 快速上手
 
-**一键安装（Windows，懒人脚本）**：双击 `bin\qaq-install.cmd`（装依赖 + 构建），再双击 `bin\qaq-web.cmd` 打开交互式守卫控制台——无需记任何命令。
+**一键安装（Windows，懒人脚本）**：双击 `bin\qaq-install.zh.cmd`（装依赖 + 构建），再双击 `bin\qaq-web.zh.cmd` 打开交互式守卫控制台——无需记任何命令。（英文版启动器为 `bin\qaq-install.cmd` / `bin\qaq-web.cmd`。）
 
 手动安装：
 
@@ -32,7 +32,7 @@ pnpm build   # 产出 dist/qaq.mjs 单文件可执行
 从可见 CMD 窗口接管 `dsh web`：
 
 ```cmd
-bin\qaq-web.cmd [--port 3080] [--yes]
+bin\qaq-web.zh.cmd [--port 3080] [--yes]
 ```
 
 或直接：
@@ -62,12 +62,12 @@ qaq dsh web --port 3080 --yes
 
 全局开关：`--yes` 自动确认回滚。
 
-## 一键控制台（`qaq console` / `bin\qaq-web.cmd`）
+## 一键控制台（`qaq console` / `bin\qaq-web.zh.cmd`）
 
 可见 CMD 窗口里的中文菜单：
 
 ```
-[1] 一键启动守卫（接管 dsh web）    — 每次启动前重新自检（fresh preflight）
+[1] 一键启动守卫（接管 dsh web）    — 每次启动前重新自检
 [2] 查看状态                        — 计数 / 上次成功 / 最近快照
 [3] 手动备份当前配置为 last-good
 [4] 手动回滚到 last-good
@@ -85,14 +85,14 @@ qaq dsh web --port 3080 --yes
 
 ### 首次配置（Windows）
 
-1. **安装** — 双击 `bin\qaq-install.cmd`。它会检查 Node.js >= 22、安装依赖（pnpm，失败时回退 npx）、并构建 `dist/qaq.mjs`。
-2. **挂载备份插件（推荐）** — 运行 `bin\qaq-web.cmd`，选 **[6] 自动挂载 dsh-qaq 备份插件**。它把 `dsh-qaq` 加进 profile 的 bundle 列表，并在 profile 的 `node_modules` 里建好模块链接。此后每次干净启动、host 稳定后，插件会自动把配置快照到 `~/.dsh/.qaq`（仅备份，绝不改 DSH 行为）。profile 自己的 `cordis.patch.yml` 故意不动——DSH 会从 bundle 声明自动加载插件的 patch 层。
+1. **安装** — 双击 `bin\qaq-install.zh.cmd`。它会检查 Node.js >= 22、安装依赖（pnpm，失败时回退 npx）、并构建 `dist/qaq.mjs`。
+2. **挂载备份插件（推荐）** — 运行 `bin\qaq-web.zh.cmd`，选 **[6] 自动挂载 dsh-qaq 备份插件**。它把 `dsh-qaq` 加进 profile 的 bundle 列表，并在 profile 的 `node_modules` 里建好模块链接。此后每次干净启动、host 稳定后，插件会自动把配置快照到 `~/.dsh/.qaq`（仅备份，绝不改 DSH 行为）。profile 自己的 `cordis.patch.yml` 故意不动——DSH 会从 bundle 声明自动加载插件的 patch 层。
 3. **启动** — 选 **[1] 一键启动守卫**。控制台会重新做启动前自检（dsh 命令、浏览器、端口），然后接管 `dsh web`。UI 稳定通过确认窗口后，配置被记为 last-good，守卫转入后台持续监控（随时可回车回菜单，守卫继续运行）。
 4. **验证** — 选 **[2] 查看状态**（或命令行 `qaq status`）：`hostFailures` / `uiFailures` 应为 0，且存在 `lastSuccess` / `lastGoodSnapshot`。
 
 ### 日常使用
 
-- 每次都用同一方式启动 DSH：`bin\qaq-web.cmd` → **[1]**。之后尽量不要再直接跑 `dsh web`——守卫是唯一能发现红屏的监督者。
+- 每次都用同一方式启动 DSH：`bin\qaq-web.zh.cmd` → **[1]**。之后尽量不要再直接跑 `dsh web`——守卫是唯一能发现红屏的监督者。
 - 若 UI 连续红屏（或宿主崩溃）**3 次**，QAQ 会给出回滚确认（带 diff 预览）。接受即可——坏配置会保留在 `~/.dsh/.qaq/rolled-back/` 供事后检查，守卫会自动重启一次。
 - 回滚 + 重启成功后，失败计数清零、防死循环栅栏解除；恢复的配置就是坏掉之前的那份。
 

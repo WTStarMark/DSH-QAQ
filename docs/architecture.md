@@ -42,7 +42,7 @@ QAQ 的检测线（L3）是唯一可靠的**非侵入**探测：用 headless Chr
 | 插件挂载 | `src/install-plugin.ts` | 把 dsh-qaq 插件装入 DSH profile（bundle 机制） | `installPlugin()` |
 | 路径助手 | `src/paths.ts` | `$DSH_HOME` / `.qaq` / profile 路径推导 | `resolveDshHome()`, `qaqDir()`, `profileDir()` |
 | 日志 | `src/log.ts` | 结构化多文件轮转日志 | `Logger` |
-| DSH 备份插件 | `packages/dsh-qaq/` | 在 DSH host 内部，host settle 后写配置快照 | `apply()`, `name` |
+| DSH 备份插件 | `packages/dsh-qaq/` | 在 DSH host 内部，宿主稳定后写配置快照 | `apply()`, `name` |
 
 ---
 
@@ -110,7 +110,7 @@ $DSH_HOME/profiles/web/
   package.json        ── 声明 dsh.profile.bundles（插件层列表）
   cordis.patch.yml    ── 用户 patch 层（QAQ 从不修改）
 
-         │ 健康确认后（守卫） / host settle 后（dsh-qaq 插件）
+         │ 健康确认后（守卫） / 宿主稳定后（dsh-qaq 插件）
          ▼
 $DSH_HOME/.qaq/
   state.json          ── 计数 / lastSuccess / lastGoodSnapshot / rolledBackAt

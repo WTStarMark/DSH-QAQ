@@ -1,15 +1,15 @@
 @echo off
 setlocal
-title QAQ Guard - DeepSeek Harness 启动容灾守卫
-REM 作者：WTStarMark
+title QAQ Guard - DeepSeek Harness Launch Resilience Guard
+REM Author: WTStarMark
 cd /d "%~dp0\.."
 if not exist "node_modules" (
   echo.
-  echo [qaq] 还没安装依赖。请先运行：bin\qaq-install.cmd
+  echo [qaq] Dependencies not installed yet. Run bin\qaq-install.cmd first.
   pause
   exit /b 1
 )
 node --import tsx/esm src\cli.ts console %*
 echo.
-echo [qaq] 守卫控制台已退出。
+echo [qaq] Guard console exited.
 pause

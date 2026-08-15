@@ -68,7 +68,7 @@
 
 - 受监督子进程健康后，锁**持续持有到子进程退出**（`watchSupervisor` 在 exit 时释放），期间：
   - 菜单顶部显示"🛡 守卫监控中"；再次选 [1] 被拒绝（提示先等退出）。
-  - 每次启动都重新 `preflight`（fresh），不会用过期的端口检查。
+  - 每次启动都重新 `preflight`（全新自检），不会用过期的端口检查。
 - Ctrl+C（SIGINT）：先杀受监督子进程再退出——不留进程占端口。
 - 关闭窗口：Windows 向同控制台广播 `CTRL_CLOSE_EVENT`，守卫与子进程一起终止；
   残留锁由 PID 存活检查自动回收。
@@ -95,7 +95,7 @@ loader entry id` 启动崩溃（真实集成抓到的缺陷）。对旧版残留
 
 ### 3.3 插件行为
 
-`dsh-qaq` 在 DSH host 内部运行：`ctx.get('loader')?.await?.()` 等 loader 树 settle 后，
+`dsh-qaq` 在 DSH host 内部运行：`ctx.get('loader')?.await?.()` 等 loader 树稳定后，
 把 profile 配置快照到 `~/.dsh/.qaq/latest-good` + `history/<ts>/`（均带 manifest.json）。
 **失败启动不写快照**（`.catch(() => {})`）。
 

@@ -1,6 +1,6 @@
 # QAQ — DeepSeek Harness Launch Resilience Guard
 
-[中文说明](./README.zh-CN.md)
+[Simplified Chinese](./README.zh.md)
 
 QAQ is a **launch resilience guard** for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH). When a disrupted profile configuration prevents DSH from starting normally — a crashed host **or** a red-screened Web UI — QAQ automatically restores the configuration snapshot from the last successful boot and restarts, while preserving the broken config for manual recovery.
 
@@ -20,7 +20,7 @@ DSH's Web surface has a failure mode where the **host is alive but the UI red-sc
 
 ## Install / Quick start
 
-**One-click (Windows, 懒人脚本)**: double-click `bin\qaq-install.cmd` (installs deps + builds), then double-click `bin\qaq-web.cmd` to open the interactive guard console — no commands to remember.
+**One-click (Windows)**: double-click `bin\qaq-install.cmd` (installs deps + builds), then double-click `bin\qaq-web.cmd` to open the interactive guard console — no commands to remember. (Chinese launcher variants: `bin\qaq-web.zh.cmd` / `bin\qaq-install.zh.cmd`.)
 
 Or manually:
 
@@ -57,38 +57,38 @@ qaq dsh web --port 3080 --yes
 | `qaq backup [--profile web]` | snapshot the current profile as last-good |
 | `qaq restore --to <snapDir> [--profile web]` | restore a profile from a snapshot directory |
 | `qaq reset --profile web` | zero the failure counters |
-| `qaq console` | open the interactive menu (懒人脚本, same as `bin\qaq-web.cmd`) |
+| `qaq console` | open the interactive menu (lazy launcher, same as `bin\qaq-web.cmd`) |
 | `qaq install-plugin [--profile web]` | auto-mount the `dsh-qaq` backup plugin into a profile |
 
 Global: `--yes` auto-confirms rollbacks.
 
 ## One-click console (`qaq console` / `bin\qaq-web.cmd`)
 
-A Chinese-language menu in a visible CMD window:
+A menu in a visible CMD window. The console UI is currently Chinese; the items correspond to:
 
 ```
-[1] 一键启动守卫（接管 dsh web）    — supervised launch (fresh preflight each time)
-[2] 查看状态                        — current counters / last success / last snapshot
-[3] 手动备份当前配置为 last-good
-[4] 手动回滚到 last-good
-[5] 重置失败计数
-[6] 自动挂载 dsh-qaq 备份插件        — idempotent, rollback-safe (never breaks a boot)
-[7] 查看日志（error / access / host）
-[q] 退出
+[1] Start the guard (take over dsh web)  — supervised launch (fresh preflight each time)
+[2] View status                          — counters / last success / last snapshot
+[3] Back up the current profile as last-good
+[4] Roll back to last-good
+[5] Reset failure counters
+[6] Mount the dsh-qaq backup plugin      — idempotent, rollback-safe (never breaks a boot)
+[7] View logs (error / access / host)
+[q] Quit
 ```
 
 While a supervised `dsh web` is running, the guard lock is held until it exits (a second launch is refused and a stale port check can never misfire); Ctrl+C kills the supervised child so no process is left holding the port.
 
-The console clears the screen before every menu render — the window always shows one screen (persistent header + last action result + menu) instead of stacking stale output. Detailed views (status / logs) pause with `[回车返回菜单]`.
+The console clears the screen before every menu render — the window always shows one screen (persistent header + last action result + menu) instead of stacking stale output. Detailed views (status / logs) pause with an Enter-to-return prompt.
 
-## Operations guide (操作指南)
+## Operations guide
 
 ### First-time setup (Windows)
 
 1. **Install** — double-click `bin\qaq-install.cmd`. It checks Node.js >= 22, installs dependencies (pnpm, with an npx fallback), and builds `dist/qaq.mjs`.
-2. **Mount the backup plugin (recommended)** — run `bin\qaq-web.cmd`, pick **[6] 自动挂载 dsh-qaq 备份插件**. This adds `dsh-qaq` to the profile's bundle list and links the module into the profile's `node_modules`. From then on, the plugin snapshots the config every time a clean host boot settles (backup-only; it never changes DSH behavior). The profile's own `cordis.patch.yml` is intentionally left untouched — DSH auto-loads the plugin's patch from its bundle declaration.
-3. **Launch** — pick **[1] 一键启动守卫**. The console re-runs the pre-launch self-check (dsh command, browser, port), then supervises `dsh web`. Once the UI has been healthy for the confirmation window, the config is recorded as last-good and the guard keeps monitoring in the background (return to the menu anytime; the guard keeps running).
-4. **Verify** — pick **[2] 查看状态** (or run `qaq status`): `hostFailures` / `uiFailures` should be 0 and `lastSuccess` / `lastGoodSnapshot` present.
+2. **Mount the backup plugin (recommended)** — run `bin\qaq-web.cmd`, pick **[6]** (mount the dsh-qaq backup plugin). This adds `dsh-qaq` to the profile's bundle list and links the module into the profile's `node_modules`. From then on, the plugin snapshots the config every time a clean host boot settles (backup-only; it never changes DSH behavior). The profile's own `cordis.patch.yml` is intentionally left untouched — DSH auto-loads the plugin's patch from its bundle declaration.
+3. **Launch** — pick **[1]** (start the guard). The console re-runs the pre-launch self-check (dsh command, browser, port), then supervises `dsh web`. Once the UI has been healthy for the confirmation window, the config is recorded as last-good and the guard keeps monitoring in the background (return to the menu anytime; the guard keeps running).
+4. **Verify** — pick **[2]** (view status) or run `qaq status`: `hostFailures` / `uiFailures` should be 0 and `lastSuccess` / `lastGoodSnapshot` present.
 
 ### Everyday use
 
@@ -100,8 +100,8 @@ The console clears the screen before every menu render — the window always sho
 
 | Symptom | What to do |
 |---------|-----------|
-| `启动前自检未通过` — dsh not found | Put `dsh` on `PATH`, set `QAQ_DSH_CMD`, or pass `--cwd <dir>` pointing at the DSH checkout |
-| `端口已被占用` — port busy | Stop the other process, or pick another port: `--port N` |
+| `Pre-launch self-check failed` — dsh not found | Put `dsh` on `PATH`, set `QAQ_DSH_CMD`, or pass `--cwd <dir>` pointing at the DSH checkout |
+| `Port already in use` — port busy | Stop the other process, or pick another port: `--port N` |
 | UI red-screens again after a rollback | Inspect the logs and the preserved bad config: `qaq console` → **[7]**, or read `~/.dsh/.qaq/log/` (`error.log`, `access.log`, `host.log`) |
 | Guard says `anti-loop fence is active` | A rollback already happened within the last 5 minutes. Fix the config manually (see `rolled-back/`), then `qaq reset --profile web` to clear the counters |
 | Want to undo a rollback | `qaq restore --to <snapDir> --profile web` with any directory under `~/.dsh/.qaq/history/` (or `rolled-back/`) |
@@ -188,11 +188,11 @@ Integration fixture: `qaq-test-plugins/dsh-broken-theme` (injects a service that
 | `src/store.ts` | atomic `~/.dsh/.qaq` read/write + snapshot management + lock |
 | `src/rollback.ts` | rollback + broken-config backup + anti-loop + success bookkeeping |
 | `src/env.ts` | auto-discovery + pre-launch self-check (dsh / browser / port) |
-| `src/console.ts` | interactive menu GUI (懒人脚本, CMD window) |
+| `src/console.ts` | interactive menu GUI (lazy launcher, CMD window) |
 | `src/install-plugin.ts` | auto-mount the dsh-qaq backup plugin (rollback-safe) |
 | `src/paths.ts` · `src/log.ts` | path helpers; structured multi-file rotating logger |
 | `packages/dsh-qaq/` | DSH backup plugin (snapshots after host boot settles; backup-only) |
-| `bin/` | `qaq` / `qaq-web.cmd` / `qaq-install.cmd` launchers |
+| `bin/` | `qaq` / `qaq-web.cmd` / `qaq-install.cmd` launchers (+ `qaq-web.zh.cmd` / `qaq-install.zh.cmd` Chinese variants) |
 | `tools/` · `test/` | integration/smoke scripts; vitest specs |
 
 ## Documentation
@@ -205,7 +205,7 @@ Developer-oriented deep-dives for secondary development:
 | [guard-lifecycle.md](docs/guard-lifecycle.md) | supervised boot flow, failure classification, transient retry, confirmation window |
 | [state-and-rollback.md](docs/state-and-rollback.md) | state.json, snapshots, anti-loop fence, guard lock |
 | [ui-detection.md](docs/ui-detection.md) | headless-Chrome CDP client, L3 text criteria, probe timing |
-| [console-and-env.md](docs/console-and-env.md) | 懒人脚本 console, environment auto-discovery, plugin mounting |
+| [console-and-env.md](docs/console-and-env.md) | lazy launcher console, environment auto-discovery, plugin mounting |
 | [logging.md](docs/logging.md) | structured log format, four channels, rotation |
 | [testing.md](docs/testing.md) | unit-test matrix, smoke, real-DSH integration, fault injection |
 
