@@ -8,6 +8,11 @@ QAQ is a **launch resilience guard** for [DeepSeek Harness](https://github.com/d
 
 **Non-invasive**: QAQ never edits DSH source. The guard is a standalone executable that supervises the `dsh web` process and reads the browser's real DOM over CDP; the backup plugin only reads configuration and never changes behavior.
 
+<p align="center">
+  <img src="img/en.png" alt="QAQ interface" width="49%" />
+  <img src="img/zh.png" alt="QAQ 界面展示" width="49%" />
+</p>
+
 ## What it solves
 
 DSH's Web surface has a failure mode where the **host is alive but the UI red-screens**: the host process runs, the port responds, yet the browser renders `Failed to load plugins`. Such failures are invisible to host-process monitoring and cannot be detected by `curl` (the server-side HTML ships an empty `<div id="root">`, rendered client-side). The only reliable non-invasive probe is to open the page in a headless browser and read the actual DOM. QAQ's UI-detection line is exactly that.

@@ -8,6 +8,11 @@
 
 **不侵入 DSH 源码**：守卫是独立可执行，只通过 `spawn` 进程 + CDP 读浏览器真实 DOM；备份插件只读配置不改行为。
 
+<p align="center">
+  <img src="img/zh.png" alt="QAQ 界面展示" width="49%" />
+  <img src="img/en.png" alt="QAQ interface" width="49%" />
+</p>
+
 ## 它解决什么
 
 DSH Web 存在一种「宿主活、UI 红屏」的失败模式：宿主进程正常、端口可达，但浏览器渲染出 `Failed to load plugins`。这类失败纯监听宿主进程抓不到、纯 `curl` 抓空 root 也测不到（服务端 HTML 里 `<div id="root">` 是空的，由 React 运行时渲染）。唯一可靠且不侵入的手段，是用 headless 浏览器打开页面、读取真实 DOM。QAQ 的 UI 侦测线正是这么做。
