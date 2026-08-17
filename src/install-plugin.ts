@@ -12,7 +12,7 @@
  * boot ("duplicate loader entry id") — a real bug caught by the integration
  * test. A stale manual insert row left by an older QAQ is only warned about.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync, symlinkSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, symlinkSync, lstatSync, readlinkSync, rmSync, statSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -78,12 +78,31 @@ export function installPlugin(home: string, profile: string, log: Logger, lang: 
   }
 
   // Link the plugin module into the profile so DSH can resolve it by name.
+  // The junction is VALIDATED, not just checked for existence: a link left by a
+  // moved/reinstalled QAQ (or an orphan whose target directory vanished) would
+  // keep loading OLD plugin code — defeating the very update this re-mount is
+  // meant to deliver. Only a symlink/junction WE created may be replaced; a real
+  // directory or file at the path is never touched (user data).
   const nmDir = join(pr, 'node_modules')
+  const linkPath = join(nmDir, name)
+  const linkTargetIsOurs = (): boolean => {
+    try { return resolve(readlinkSync(linkPath)) === plugin } catch { return false }
+  }
+  // Existence WITHOUT following the link: a dangling junction (target deleted)
+  // fails existsSync (which stats the target) yet still occupies the path and
+  // must be replaced.
+  const pathExists = (p: string): boolean => { try { lstatSync(p); return true } catch { return false } }
   let linkFailed = false
-  if (!existsSync(join(nmDir, name, 'package.json'))) {
+  const linkValid = existsSync(join(linkPath, 'package.json')) && linkTargetIsOurs()
+  if (!linkValid) {
     try {
+      if (pathExists(linkPath)) {
+        const st = lstatSync(linkPath)
+        if (!st.isSymbolicLink()) throw new Error('path exists and is not a symlink: ' + linkPath)
+        rmSync(linkPath, { recursive: true, force: true })
+      }
       mkdirSync(nmDir, { recursive: true })
-      symlinkSync(plugin, join(nmDir, name), 'junction')
+      symlinkSync(plugin, linkPath, 'junction')
     } catch { linkFailed = true }
   }
 

@@ -87,17 +87,24 @@ qaq dsh web --port 3080 --yes
 [7] 管理插件                         — 安装 / 卸载 / 停用 / 启用
 [8] 查看日志                         — 全屏日志查看器（error/access/host/qaq）
 [9] 侧载 watch                       — 对外部启动的 DSH 运行持续侧载守卫（开关切换）
-[10] 切换语言 en / zh
-[11] 退出
+[10] 热更新                          — client 插件热更监控 + bundle/dist 自动重启开关
+[11] 切换语言 en / zh
+[12] 退出
 ```
 
 导航：`↑`/`↓`（或 `j`/`k`）移动选择，`Enter`/`Space` 执行，数字 `1..N` 直达动作，`q`/`Esc`/`Ctrl+C` 退出。
 
 - **日志查看器**（`[8]`）：`1`–`4` 切换 `error.log` / `access.log` / `host.log` / `qaq.log`，`↑`/`↓` 滚动，`q`/`Esc`/`Enter` 返回菜单。
 - **插件管理器**（`[7]`）：管理**真实的 DeepSeek Harness** 插件。它自动发现 DSH 安装（home + 源码 checkout，并通过心跳检测正在运行的进程），扫描 checkout 的 `packages/` 找到可安装的 `@deepseek-ai/dsh-*` bundle 包，列出当前 profile 里已安装/已启用的项；`↑`/`↓` 选中插件，然后 `e` 启用、`d` 停用、`u` 卸载、`i` 安装；`q`/`Esc` 返回菜单。**停用** = 保留模块但移出启动 bundle；**卸载** = 两者都移除。它绝不改动 QAQ 自己的仓库。
+- **dsh-qaq 插件**：**TUI 打开时自动挂载**——若 profile 未安装/未启用 dsh-qaq，QAQ 自动完成挂载（写入 bundle 列表 + 建立模块链接），已安装启用的不受打扰（best-effort，失败仅告警）。菜单 `[6]` 是可随时重跑的**覆盖更新入口**：校验模块链接目标，指向过期/失效 QAQ 副本（junction 目标校验、孤儿链接、重建 lib）时自动修复——旧链接绝不会静默加载旧插件代码；真实目录/文件占位则拒绝替换（保护用户数据）。
 - **备份管理**（`[4]`）：备份列表子屏，明确区分**自动备份**与**手动备份**两群——自动备份（守卫确认健康 / 插件真实对话后自动产生，独立保留 **10** 份）与手动备份（`[3]` 或 `qaq backup` 产生，独立保留 **3** 份）互不干扰。`↑`/`↓` 移动选择、`Enter` 还原到该项、`q`/`Esc` 返回。
 - **运行模式**：状态行显示当前集成模式 —— **启动器**（QAQ 拥有被监督的 `dsh web`）、**侧载**（检测到外部 DSH，或在持续监视它）、或**空闲**。
 - **侧载守卫**（`[9]`）：一个**开关**。首次按下会先解析外部 DSH 目标（`qaq tui --port` 指定的端口，否则用 dsh-qaq 插件心跳），固定该端口后每隔约 15s 探测一次真实 DOM——计数 host/UI 失败并在达到阈值时回滚（自动确认、CLI 决策），与 `qaq watch` 行为一致。再按 `[9]`（或退出仪表盘）即停止。状态行会显示被监视的 URL 与最近一次探测结果。
+- **热更新**（`[10]`）：插件热更新的三通道开关面板，全部**默认关闭**、可选启用：
+  - `[1]` **client bundle 热更监控**——监视每个已启用 client 插件的 `lib/client.js`（DSH 的 client-hmr 会热换浏览器 fiber，无需重启）。QAQ 负责**验证**（CDP 全新页面探测 + dsh-qaq 插件清单）与**回滚**：热换前把旧 bundle 快照进 `~/.dsh/.qaq/hot-snapshots/`，验证失败时还原文件（再次触发热换回旧码）并复核，仍失败才升级到受监督重启。**它只读 `.qaq` 与 profile 文件，绝不触碰 state.json / last-good / 失败计数 / 防循环栅栏**。
+  - `[2]` **bundle 列表变化自动重启**——profile `package.json` 的 `dsh.profile.bundles` 变化（增删插件）需要重启才生效；开启后守卫检测到变化会自动执行**受监督重启**（kill → 重新 boot → 健康确认窗口，失败走既有回滚），即"伪更新"。需先按 `[1]` 进入启动器模式。
+  - `[3]` **web dist 变化自动重启**——DSH 前端 `apps/web/dist`（或已安装的 `dsh-web-frontend/dist`）重建后无法热换，开启后同样触发受监督重启。
+  - 插件管理器（`[7]`）里对 **client 类插件**的启用/停用走 `cordis.patch.yml`，DSH 的配置 HMR 会**即时生效**——QAQ 会轮询插件清单确认已生效（`已热生效 ✔`）；DSH 离线时提示"重启后生效"；失败时提示"旧树仍在运行"（DSH HMR 失败保留 last-good 树，与守卫"失败不破坏"哲学一致）。**bundle 类插件**的变更仍标记"重启后生效"，可配合 `[2]` 自动重启。
 
 受监督的 `dsh web` 运行期间，守卫锁会一直持有到它退出（期间拒绝二次启动，也不会被过期的端口检查误导）；`q`/`Esc`/`Ctrl+C` 退出仪表盘时会先杀掉受监督子进程，避免进程残留占住端口。
 
@@ -189,6 +196,28 @@ qaq dsh web --port 3080 --yes
 - **历史保留确定性**：快照按 ISO 时间戳名排序，跨重启保留稳定。
 - **宿主失败快速上报**：子进程在端口打开前退出（或 spawn 失败，如命令不存在）会立即上报，不再干等完整端口超时。
 
+## 守卫能力与边界
+
+**能守卫的（按代码事实）：**
+
+| 类别 | 机制 |
+|---|---|
+| 启动失败（host） | 端口未就绪 / 进程早退 / fail-loud 标记（`plugin tree failed to load` 等）→ 确定性错误**首次即回滚** |
+| UI 红屏 | 固定文本 `Failed to load plugins`；确定性红屏（`did not activate … waiting for service`）首次即回滚 |
+| 运行中劣化 | 确认窗口复查 + 侧载每 15s 重探测真实 DOM |
+| 环境/依赖类失败 | 输出含 `EPERM` / `ERR_MODULE_NOT_FOUND` / `unsupported engine` 等 → 归为 `env`，**不计数、不回滚**（回滚无效），提示检查 DSH 安装 / Node 版本 / 权限 |
+| 快照损坏 | 回滚前校验快照（JSON 可解析、`bundles` 结构合法、patch 非空）——坏快照绝不还原；状态指针损坏时自动回退到**最新合法**自动快照 |
+| 非红屏劣化信号 | 已启用插件 fiber 落入 `failed` 态（dsh-qaq 清单）或探测期捕获 console error → 告警 + `ui-degraded` 事件（**不计分**，避免误杀次要插件） |
+
+**仍无法守卫的（设计盲区，需人工）：**
+
+- **非红屏语义损坏**：页面渲染健康但功能逻辑损坏（按钮无响应、运算错误）——DOM 探测与 fiber 信号都看不到语义。
+- **UI 卡死无响应**：探测超时归 `unknown`，**不计数**（慢加载与真卡死难以区分，宁可漏报）。
+- **非配置根源**：DSH 自身 bug、依赖损坏、磁盘满等——能检测会重试，但回滚无效（`env` 类已单独分类提示）。
+- **Electron/桌面载体**：守卫的 UI 探测针对 `dsh web` 的 HTTP 页面。
+- **用户浏览器独有环境**：守卫用自己的 headless Chrome 探测，用户浏览器缓存/扩展问题不可见。
+- **侧载发现依赖心跳**：`qaq watch` 靠 dsh-qaq 心跳发现目标端口，插件未装则发现不了。
+
 ## 测试
 
 ```bash
@@ -198,7 +227,7 @@ pnpm smoke     # 一键回归：单测 + 隔离 home 种子/破坏/守卫检测
 
 `pnpm smoke` 在可用 DSH checkout（`QAQ_SMOKE_DSH_HOME`）时才会执行真实 DSH 集成段。
 
-CI（`.github/workflows/ci.yml`）在 **ubuntu-latest** 与 **windows-latest**、Node 22、冻结 lockfile 下运行 typecheck + 构建 + 单测 + smoke。
+CI（`.github/workflows/ci.yml`）在 **ubuntu-latest** 与 **windows-latest** × **Node 22 / 24**、冻结 lockfile 下运行 typecheck + 构建 + 插件 lib 一致性 + 单测 + smoke。
 
 集成验收素材：`qaq-test-plugins/dsh-broken-theme`（注入永不存在的服务 -> 确定性红屏），配合 `tools/rollback-test.ps1` 可在真实 DSH 实例上跑通「失败 -> 计数 -> 回滚 -> 还原」闭环。
 

@@ -1,7 +1,7 @@
 {
   "name": "qaq",
   "version": "0.1.0",
-  "description": "DeepSeek Harness launch resilience guard: detect host/UI boot failure, roll back to last-good profile config, and restart. Non-invasive; runs as a visible CMD window.",
+  "description": "Launch resilience guard for DeepSeek Harness (DSH): supervises dsh web, reads the real DOM via headless Chrome + CDP to catch host crashes / UI red-screens / plugin degradation, and auto-rolls-back to the last known-good config. Non-invasive, one-command setup, structured logs, plugin hot-update protection.",
   "private": true,
   "type": "module",
   "license": "MIT",

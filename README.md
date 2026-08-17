@@ -90,17 +90,24 @@ On a terminal (`qaq tui`) QAQ shows a **full-screen, auto-refreshing dashboard**
 [7]  manage plugins                     — install / uninstall / enable / disable
 [8]  view logs                           — full-screen log viewer (error/access/host/qaq)
 [9]  sideload watch                      — run a continuous sideload guard on an external DSH (toggle)
-[10] toggle en / zh
-[11] quit
+[10] hot update                         — client-plugin live-reload watch + auto-restart toggles
+[11] toggle en / zh
+[12] quit
 ```
 
 Navigation: `↑`/`↓` (or `j`/`k`) move the selection, `Enter`/`Space` run the action, digits `1..N` jump straight to an action, `q`/`Esc`/`Ctrl+C` quit.
 
 - **Log viewer** (`[8]`): `1`–`4` switch between `error.log` / `access.log` / `host.log` / `qaq.log`, `↑`/`↓` scroll, `q`/`Esc`/`Enter` return to the menu.
 - **Plugin manager** (`[7]`): manages the **real DeepSeek Harness** plugins. It auto-discovers the DSH installation (home + source checkout, detected running process via heartbeat), scans the checkout's `packages/` for the installable `@deepseek-ai/dsh-*` bundle packages, lists what's installed/enabled in the active profile, and lets you `↑`/`↓` select then `e` enable, `d` disable, `u` uninstall, `i` install. Disabling keeps the module installed but removes it from the profile's boot bundle; uninstalling removes both. It never touches QAQ's own repository.
+- **dsh-qaq plugin**: **auto-mounted when the dashboard opens** — if the profile does not have dsh-qaq installed/enabled, QAQ mounts it automatically (bundle list entry + module link); an already-installed one is left untouched (best-effort, failures only warn). Menu `[6]` is a re-runnable **overwrite/update entry**: it validates the module link target and repairs a stale/orphaned link pointing at an old QAQ copy (junction target check, orphan repair, lib rebuild) — an old link never silently keeps loading old plugin code; a real directory/file at the path is never replaced (user-data protection).
 - **Operating modes**: the status line shows which integration mode is active — **launcher** (QAQ owns a supervised `dsh web`), **sideload** (an external DSH is up, or a continuous sideload guard is watching it), or **idle**.
 - **Backup manager** (`[4]`): the backup-list sub-screen, split into **auto backups** (written by the guard on confirmed health / the plugin after a real conversation; independent **10**-snapshot quota) and **manual backups** (written by `[3]` / `qaq backup`; independent **3**-snapshot quota). `↑`/`↓` move the selection, `Enter` restores the chosen backup, `q`/`Esc` returns.
 - **Sideload guard** (`[9]`): a **toggle**. First press resolves the external DSH (the `--port` you gave `qaq tui`, else the dsh-qaq plugin heartbeat), pins that port, then keeps probing the real DOM every ~15s — counting host/UI failures and rolling back at threshold (auto-confirm, CLI-owned), exactly like `qaq watch`. Press `[9]` again (or quit) to stop. The status line shows the watched URL and the last probe outcome.
+- **Hot update** (`[10]`): a three-channel plugin hot-update panel, **all toggles off by default**:
+  - `[1]` **client bundle watch** — watches every enabled client plugin's `lib/client.js`; DSH's own client-hmr hot-swaps the browser fiber with no restart. QAQ owns **verification** (fresh-page CDP probe + the dsh-qaq plugin inventory) and **rollback**: the pre-change bundle is snapshotted to `~/.dsh/.qaq/hot-snapshots/`, on a failed swap the file is restored (which re-triggers client-hmr), re-verified, and only a persistent failure escalates to a supervised restart. It only reads/writes `.qaq` and profile files — **never state.json / last-good / failure counters / the rollback fence**.
+  - `[2]` **auto-restart on bundle-list change** — a change to `dsh.profile.bundles` (plugin add/remove) needs a restart to apply; when on, the guard detects it and performs a **supervised restart** (kill → re-boot → health-confirm window, existing rollback path on failure) — a "pseudo" hot update. Requires launcher mode (`[1]`).
+  - `[3]` **auto-restart on web dist change** — the frontend `apps/web/dist` (or installed `dsh-web-frontend/dist`) cannot hot-swap; when on, a rebuild triggers the same supervised restart.
+  - In the plugin manager (`[7]`), enabling/disabling a **client-kind** plugin writes `cordis.patch.yml` and DSH's config HMR applies it **live** — QAQ polls the plugin inventory to confirm (`applied live ✔`), says "applies at next boot" when DSH is offline, and reports "old tree still running" on failure (DSH HMR keeps the last-good tree, matching the guard's never-break-the-boot posture). **Bundle-kind** changes still state "restart to apply"; pair them with `[2]`.
 
 The panel auto-refreshes while a supervised `dsh web` runs; the guard lock is held until it exits (a second launch is refused and a stale port check never misfires). `q`/`Esc`/`Ctrl+C` quit the dashboard; a supervised child is killed so no process is left holding the port.
 
@@ -190,6 +197,28 @@ Every record is one JSON line (`{ ts, level, cat, phase?, msg, ...meta }`) so th
 - **Deterministic history retention**: snapshots sort by their ISO-timestamp names, stable across restarts.
 - **Fast host-failure reporting**: a child that exits before its port opens (or a spawn failure such as a missing command) is reported immediately instead of waiting out the full port timeout.
 
+## What the guard catches — and what it cannot
+
+**Guarded (by code fact):**
+
+| Category | Mechanism |
+|---|---|
+| Boot failure (host) | port never ready / early exit / fail-loud markers (`plugin tree failed to load` …) → deterministic errors **roll back on first hit** |
+| UI red screen | pinned text `Failed to load plugins`; deterministic red screens (`did not activate … waiting for service`) roll back on first hit |
+| Runtime degradation | confirmation-window re-probe + sideload re-probing the real DOM every ~15s |
+| Environment/dependency failures | output containing `EPERM` / `ERR_MODULE_NOT_FOUND` / `unsupported engine` … → classified `env`, **never counted, never rolled back** (a rollback cannot fix it); the operator is pointed at the DSH install / Node version / permissions |
+| Corrupt snapshots | snapshots are validated before restore (parseable JSON, sane `bundles`, non-empty patch) — a corrupt snapshot is never restored; a corrupt state pointer falls back to the **newest valid** auto snapshot |
+| Non-red-screen degradation | enabled plugins in a FAILED Cordis fiber (from the dsh-qaq inventory) or console errors sampled during the probe → warn + `ui-degraded` event (advisory, never scored) |
+
+**Still outside the guard (design blind spots, manual):**
+
+- **Semantic damage without a red screen** — a healthy-looking page whose logic is broken (dead buttons, wrong results): neither DOM nor fiber signals see semantics.
+- **Unresponsive/frozen UI** — probe timeout reports `unknown` and is **not counted** (slow load vs. true hang is indistinguishable; better to under-report).
+- **Non-configuration root causes** — DSH bugs, corrupted dependencies, full disk: detected and retried, but a rollback cannot fix them (the `env` class is already surfaced separately).
+- **Electron/desktop carriers** — the UI probe targets the `dsh web` HTTP page.
+- **The user's own browser environment** — the guard probes with its own headless Chrome; user-browser cache/extension issues are invisible.
+- **Sideload discovery depends on the heartbeat** — `qaq watch` finds its target via the dsh-qaq heartbeat; without the plugin there is nothing to discover.
+
 ## Testing
 
 ```bash
@@ -199,7 +228,7 @@ pnpm smoke     # one-shot regression: unit tests + seed/broken/detect in an isol
 
 `pnpm smoke` performs a real-DSH integration segment only when a checkout is available (set `QAQ_SMOKE_DSH_HOME`).
 
-CI (`.github/workflows/ci.yml`) runs typecheck + build + unit tests + smoke on **ubuntu-latest** and **windows-latest** with Node 22 and a frozen lockfile.
+CI (`.github/workflows/ci.yml`) runs typecheck + build + plugin-lib consistency + unit tests + smoke on **ubuntu-latest** and **windows-latest** × **Node 22 / 24** with a frozen lockfile.
 
 Integration fixture: `qaq-test-plugins/dsh-broken-theme` (injects a service that never arrives -> deterministic red screen), used with `tools/rollback-test.ps1` to exercise the full fail->count->rollback->recover loop on a real DSH instance.
 

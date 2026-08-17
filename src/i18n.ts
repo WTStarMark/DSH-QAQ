@@ -109,6 +109,7 @@ const en: Record<string, string> = {
   'tui.menu.plugins': 'Plugins',
   'tui.menu.logs': 'Logs',
   'tui.menu.sideload': 'Sideload watch',
+  'tui.menu.hot': 'Hot update',
   'tui.menu.lang': 'Language',
   'tui.menu.quit': 'Quit',
 
@@ -122,6 +123,7 @@ const en: Record<string, string> = {
   'tui.menudetail.plugins': 'install / uninstall / enable / disable DSH plugins',
   'tui.menudetail.logs': 'error / access / host / qaq log viewer',
   'tui.menudetail.sideload': 'run a continuous sideload guard on an external DSH (toggle)',
+  'tui.menudetail.hot': 'watch client-plugin bundles for live reload + auto-restart toggles',
   'tui.menudetail.lang': 'toggle en / zh',
   'tui.menudetail.quit': 'close the dashboard',
 
@@ -161,6 +163,36 @@ const en: Record<string, string> = {
   'tui.plugins.scanHint': '↑/↓ select plugin · Enter install · Esc cancel',
   'tui.plugins.local': ' · (local discovery — still manageable offline)',
 
+  // tui.ts — hot-update panel (plugin hot-reload support)
+  'tui.hot.title': 'Hot update · {profile}',
+  'tui.hot.hint': '1 watch client bundles · 2 auto-restart on bundle list · 3 auto-restart on dist · q back',
+  'tui.hot.row.watch': '[1] watch client-plugin bundles for live reload: {state}',
+  'tui.hot.row.bundles': '[2] auto-restart when the bundle list changes: {state}',
+  'tui.hot.row.dist': '[3] auto-restart when the web dist changes: {state}',
+  'tui.hot.events.none': '(no events)',
+  'tui.hot.line': 'watch {watch} · bundle-restart {bundles} · dist-restart {dist}',
+  'tui.hot.on': 'on',
+  'tui.hot.off': 'off',
+  'tui.hot.watchStarted': 'client bundle watch started ({n} plugin(s))',
+  'tui.hot.watchStopped': 'client bundle watch stopped',
+  'tui.hot.watchNone': 'no enabled client plugins with a built bundle to watch',
+  'tui.hot.ev.changed': 'changed: {name}',
+  'tui.hot.ev.verified': 'verified: {name}',
+  'tui.hot.ev.rollback': 'rolled back: {name} — {detail}',
+  'tui.hot.ev.rollback-failed': 'ROLLBACK FAILED: {name} — {detail}',
+  'tui.hot.ev.error': 'error: {name} — {detail}',
+  'tui.hot.bundlesOnMsg': 'auto-restart on bundle list change: ON',
+  'tui.hot.bundlesOffMsg': 'auto-restart on bundle list change: off',
+  'tui.hot.distOnMsg': 'auto-restart on web dist change: ON',
+  'tui.hot.distOffMsg': 'auto-restart on web dist change: off',
+  'tui.hot.restart.needLauncher': 'auto-restart needs launcher mode — press [1] to start the guard first',
+  'tui.hot.restart.triggered': '{reason} change detected — supervised restart…',
+  'tui.hot.restart.ok': 'restart after {reason} change healthy: {url}',
+  'tui.hot.restart.failed': 'restart after {reason} change failed (kind={kind})',
+  'tui.hot.verify.applied': '{name} applied live ✔',
+  'tui.hot.verify.pending': '{name} written; DSH offline — applies at next boot',
+  'tui.hot.verify.failed': '{name} NOT applied: {detail} (old tree still running)',
+
   // env.ts — pre-launch self-check problems
   'env.DSH_NOT_FOUND.msg': 'Cannot find the dsh command and no DeepSeek Harness source checkout was found.',
   'env.DSH_NOT_FOUND.hint': 'Install dsh and put it on PATH, or pass --cwd pointing at the DSH checkout; or set QAQ_DSH_CMD.',
@@ -183,6 +215,7 @@ const en: Record<string, string> = {
   'cli.usage.installPlugin': 'auto-mount dsh-qaq backup plugin',
   'cli.fatal.title': 'Pre-launch self-check failed:',
   'cli.fatal.hint': 'Try: qaq console for the interactive console, or set QAQ_DSH_CMD / --cwd.',
+  'cli.envFailure': 'Environment/dependency failure — a config rollback cannot fix this: {error}. Check the DSH install, Node version, and permissions, then retry.',
 
   // install-plugin.ts
   'plugin.already': ' (already mounted)',
@@ -315,6 +348,7 @@ const zh: Record<string, string> = {
   'tui.menu.plugins': '插件',
   'tui.menu.logs': '日志',
   'tui.menu.sideload': '侧载 watch',
+  'tui.menu.hot': '热更新',
   'tui.menu.lang': '语言',
   'tui.menu.quit': '退出',
 
@@ -328,6 +362,7 @@ const zh: Record<string, string> = {
   'tui.menudetail.plugins': '安装 / 卸载 / 停用 / 启用 DSH 插件',
   'tui.menudetail.logs': 'error / access / host / qaq 日志查看器',
   'tui.menudetail.sideload': '对外部启动的 DSH 运行持续侧载守卫（开关切换）',
+  'tui.menudetail.hot': '监控 client 插件 bundle 热更 + 自动重启开关',
   'tui.menudetail.lang': '切换 en / zh',
   'tui.menudetail.quit': '关闭仪表盘',
 
@@ -367,6 +402,36 @@ const zh: Record<string, string> = {
   'tui.plugins.scanHint': '↑/↓ 选择插件 · 回车安装 · Esc 取消',
   'tui.plugins.local': ' · （本地发现——离线也可管理）',
 
+  // tui.ts — hot-update panel (plugin hot-reload support)
+  'tui.hot.title': '热更新 · {profile}',
+  'tui.hot.hint': '1 监控 client bundle · 2 bundle 列表变化自动重启 · 3 dist 变化自动重启 · q 返回',
+  'tui.hot.row.watch': '[1] 监控 client 插件 bundle 热更：{state}',
+  'tui.hot.row.bundles': '[2] bundle 列表变化自动重启：{state}',
+  'tui.hot.row.dist': '[3] web dist 变化自动重启：{state}',
+  'tui.hot.events.none': '（暂无事件）',
+  'tui.hot.line': '热更 {watch} · bundle 重启 {bundles} · dist 重启 {dist}',
+  'tui.hot.on': '开',
+  'tui.hot.off': '关',
+  'tui.hot.watchStarted': '已启动 client bundle 热更监控（{n} 个插件）',
+  'tui.hot.watchStopped': '已停止 client bundle 热更监控',
+  'tui.hot.watchNone': '没有带已构建 bundle 的已启用 client 插件可监控',
+  'tui.hot.ev.changed': '变更：{name}',
+  'tui.hot.ev.verified': '已验证：{name}',
+  'tui.hot.ev.rollback': '已回滚：{name}——{detail}',
+  'tui.hot.ev.rollback-failed': '回滚失败：{name}——{detail}',
+  'tui.hot.ev.error': '错误：{name}——{detail}',
+  'tui.hot.bundlesOnMsg': 'bundle 列表变化自动重启：开',
+  'tui.hot.bundlesOffMsg': 'bundle 列表变化自动重启：关',
+  'tui.hot.distOnMsg': 'web dist 变化自动重启：开',
+  'tui.hot.distOffMsg': 'web dist 变化自动重启：关',
+  'tui.hot.restart.needLauncher': '自动重启需要启动器模式——请先按 [1] 启动守卫',
+  'tui.hot.restart.triggered': '检测到 {reason} 变化——受监督重启中…',
+  'tui.hot.restart.ok': '{reason} 变化后重启健康：{url}',
+  'tui.hot.restart.failed': '{reason} 变化后重启失败（kind={kind}）',
+  'tui.hot.verify.applied': '{name} 已热生效 ✔',
+  'tui.hot.verify.pending': '{name} 已写入；DSH 离线——重启后生效',
+  'tui.hot.verify.failed': '{name} 未生效：{detail}（旧树仍在运行）',
+
   // env.ts — pre-launch self-check problems
   'env.DSH_NOT_FOUND.msg': '找不到 dsh 命令，也没有发现 DeepSeek Harness 源码目录。',
   'env.DSH_NOT_FOUND.hint': '请先安装 dsh 并把启动目录加入 PATH，或指定 --cwd 指向 DSH 源码目录；也可设置 QAQ_DSH_CMD。',
@@ -389,6 +454,7 @@ const zh: Record<string, string> = {
   'cli.usage.installPlugin': '自动挂载 dsh-qaq 备份插件',
   'cli.fatal.title': '启动前自检未通过：',
   'cli.fatal.hint': '可尝试：qaq console 打开交互式控制台，或设置 QAQ_DSH_CMD / --cwd。',
+  'cli.envFailure': '环境/依赖类失败——配置回滚无法修复：{error}。请检查 DSH 安装、Node 版本与权限后重试。',
 
   // install-plugin.ts
   'plugin.already': '（此前已挂载）',

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readlinkSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { installPlugin, findQaqPluginDir } from '../src/install-plugin.ts'
 import { profileDir, qaqDir } from '../src/paths.ts'
 import { Logger } from '../src/log.ts'
@@ -85,4 +85,72 @@ describe('installPlugin edge cases', () => {
     const r = installPlugin(home, 'badjson', new Logger(home));
     expect(r.ok).toBe(false);
   });
+});
+
+describe('installPlugin junction overwrite (update path)', () => {
+  /** A profile with a bundle list ready for dsh-qaq but no link yet. */
+  function readyProfile(name: string): string {
+    const pr = profileDir(home, name)
+    mkdirSync(pr, { recursive: true })
+    writeFileSync(join(pr, 'package.json'), JSON.stringify({ name: 'p', dsh: { profile: { bundles: [] } } }))
+    writeFileSync(join(pr, 'cordis.patch.yml'), '[]\n')
+    return pr
+  }
+
+  it('replaces a junction pointing at a STALE QAQ copy (the re-mount update path)', () => {
+    const pr = readyProfile('stale-link')
+    const stale = mkdtempSync(join(tmpdir(), 'qaq-stale-'))
+    writeFileSync(join(stale, 'package.json'), JSON.stringify({ name: 'dsh-qaq', version: '0.0.0-old' }))
+    const link = join(pr, 'node_modules', 'dsh-qaq')
+    mkdirSync(join(pr, 'node_modules'), { recursive: true })
+    symlinkSync(stale, link, 'junction')
+
+    const r = installPlugin(home, 'stale-link', new Logger(home))
+    expect(r.ok).toBe(true)
+    // The junction now points at THIS repo's package, not the stale copy.
+    expect(resolve(readlinkSync(link))).toBe(findQaqPluginDir())
+    // And the module resolves to the real plugin.
+    const pkg = JSON.parse(readFileSync(join(link, 'package.json'), 'utf8'))
+    expect(pkg.name).toBe('dsh-qaq')
+    rmSync(stale, { recursive: true, force: true })
+  })
+
+  it('repairs an orphaned junction whose target directory vanished', () => {
+    const pr = readyProfile('orphan')
+    const gone = mkdtempSync(join(tmpdir(), 'qaq-gone-'))
+    const link = join(pr, 'node_modules', 'dsh-qaq')
+    mkdirSync(join(pr, 'node_modules'), { recursive: true })
+    symlinkSync(gone, link, 'junction')
+    rmSync(gone, { recursive: true, force: true }) // target gone → orphan link
+
+    expect(existsSync(join(link, 'package.json'))).toBe(false)
+    const r = installPlugin(home, 'orphan', new Logger(home))
+    expect(r.ok).toBe(true)
+    expect(existsSync(join(link, 'package.json'))).toBe(true)
+  })
+
+  it('never touches a REAL directory at the module path (user data protection)', () => {
+    const pr = readyProfile('real-dir')
+    const link = join(pr, 'node_modules', 'dsh-qaq')
+    mkdirSync(join(pr, 'node_modules', 'dsh-qaq'), { recursive: true })
+    writeFileSync(join(link, 'package.json'), JSON.stringify({ name: 'user-stuff' }))
+    writeFileSync(join(link, 'keep.txt'), 'do not delete')
+
+    const r = installPlugin(home, 'real-dir', new Logger(home))
+    expect(r.ok).toBe(false) // the link cannot be replaced → mount fails cleanly
+    // The user's directory is intact.
+    expect(readFileSync(join(link, 'keep.txt'), 'utf8')).toBe('do not delete')
+    expect(JSON.parse(readFileSync(join(link, 'package.json'), 'utf8')).name).toBe('user-stuff')
+  })
+
+  it('leaves a correct junction alone (idempotent re-mount)', () => {
+    const pr = readyProfile('ok-link')
+    const r1 = installPlugin(home, 'ok-link', new Logger(home))
+    expect(r1.ok).toBe(true)
+    const link = join(pr, 'node_modules', 'dsh-qaq')
+    const targetBefore = readlinkSync(link)
+    const r2 = installPlugin(home, 'ok-link', new Logger(home))
+    expect(r2.ok).toBe(true)
+    expect(readlinkSync(link)).toBe(targetBefore)
+  })
 });

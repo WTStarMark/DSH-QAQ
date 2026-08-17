@@ -44,7 +44,14 @@ export interface PluginInfo {
   linkTarget?: string
 }
 
-export interface PluginOpResult { ok: boolean; message: string }
+export interface PluginOpResult {
+  ok: boolean
+  message: string
+  /** Which enablement mechanism the op mutated: 'bundle' (dsh.profile.bundles,
+   *  takes effect at next boot) or 'patch' (cordis.patch.yml insert — hot on a
+   *  live DSH through config HMR). Undefined when nothing was mutated. */
+  mechanism?: 'bundle' | 'patch'
+}
 
 /** A resolved plugin row: installed vs. enabled vs. source availability. */
 export interface PluginRow {
@@ -95,7 +102,7 @@ interface PatchInsertRef { name: string; id?: string }
  * Parse `cordis.patch.yml` and return the insert tuples as { name } — the patch
  * layer's `- insert:` list is how plugins like dsh-precise-cache are enabled.
  */
-function patchInsertNames(profileDir: string): string[] {
+export function patchInsertNames(profileDir: string): string[] {
   const entries = parsePatchInserts(profileDir)
   return Array.from(new Set(entries.map((e) => e.name)))
 }
@@ -139,8 +146,10 @@ function parsePatchInserts(profileDir: string): PatchInsertRef[] {
  */
 function editPatchInsert(profileDir: string, name: string, add: boolean): boolean {
   const file = join(profileDir, 'cordis.patch.yml')
+  // A missing patch file is "no layer" — the first patch-insert plugin may be
+  // enabled before the profile ever wrote one (e.g. a bare custom profile).
   let text: string
-  try { text = readFileSync(file, 'utf8') } catch { return false }
+  try { text = readFileSync(file, 'utf8') } catch { text = '' }
   return writePatchWithInserts(profileDir, name, add, text)
 }
 
@@ -177,7 +186,7 @@ function writePatchWithInserts(profileDir: string, name: string, add: boolean, o
 }
 
 /** Map a plugin package name to the short id DSH uses in patch inserts. */
-function toId(name: string): string {
+export function toId(name: string): string {
   if (name.startsWith('@deepseek-ai/dsh-')) return name.slice('@deepseek-ai/dsh-'.length)
   if (name.startsWith('dsh-')) return name.slice('dsh-'.length)
   return name
@@ -340,7 +349,7 @@ function resolvable(pr: string, poolDir: string | undefined, name: string): bool
 }
 
 /** Resolve the module dir for `name` from the profile node_modules or the pool. */
-function resolveModuleDir(pr: string, poolDir: string | undefined, name: string): string {
+export function resolveModuleDir(pr: string, poolDir: string | undefined, name: string): string {
   if (moduleInstalled(join(pr, 'node_modules'), name)) return join(pr, 'node_modules', name)
   if (poolDir && moduleInstalled(poolDir, name)) return join(poolDir, name)
   return ''
@@ -390,6 +399,7 @@ export function setPluginEnabled(opts: { profileDir: string; profile: string; na
     // Disable: remove from whichever mechanism loads it. Also purge a stray
     // non-bundle from the bundle list (safety) while we are here.
     let changed = false
+    let mechanism: PluginOpResult['mechanism']
     const next = sanitizeBundles(pr, opts.poolDir, bundlesOf(m).filter((n) => n !== opts.name))
     if (next.length !== bundlesOf(m).length) {
       m.pkg.dsh = m.pkg.dsh ?? {}
@@ -397,11 +407,12 @@ export function setPluginEnabled(opts: { profileDir: string; profile: string; na
       m.pkg.dsh.profile.bundles = next
       writeManifestAtomic(pr, m)
       changed = true
+      mechanism = 'bundle'
     }
-    if (patchInsertNames(pr).includes(opts.name)) { editPatchInsert(pr, opts.name, false); changed = true }
+    if (patchInsertNames(pr).includes(opts.name)) { editPatchInsert(pr, opts.name, false); changed = true; mechanism = 'patch' }
     if (!changed) return { ok: true, message: t('pluginMgr.notBundled', { name: opts.name }) }
     log.access('disabled plugin ' + opts.name + ' on profile ' + opts.profile, { profile: opts.profile, action: 'disable-plugin', plugin: opts.name })
-    return { ok: true, message: t('pluginMgr.disabled', { name: opts.name }) }
+    return { ok: true, message: t('pluginMgr.disabled', { name: opts.name }), mechanism }
   }
 
   // Enable.
@@ -419,12 +430,14 @@ export function setPluginEnabled(opts: { profileDir: string; profile: string; na
     m.pkg.dsh.profile = m.pkg.dsh.profile ?? {}
     m.pkg.dsh.profile.bundles = next
     if (!writeManifestAtomic(pr, m)) return { ok: false, message: t('pluginMgr.writeFailed') }
+    log.access('enabled plugin ' + opts.name + ' on profile ' + opts.profile, { profile: opts.profile, action: 'enable-plugin', plugin: opts.name })
+    return { ok: true, message: t('pluginMgr.enabled', { name: opts.name }), mechanism: 'bundle' }
   } else {
     // Client plugin (e.g. dsh-precise-cache): re-enable via the patch insert list.
     if (!editPatchInsert(pr, opts.name, true)) return { ok: false, message: t('pluginMgr.writeFailed') }
+    log.access('enabled plugin ' + opts.name + ' on profile ' + opts.profile, { profile: opts.profile, action: 'enable-plugin', plugin: opts.name })
+    return { ok: true, message: t('pluginMgr.enabled', { name: opts.name }), mechanism: 'patch' }
   }
-  log.access('enabled plugin ' + opts.name + ' on profile ' + opts.profile, { profile: opts.profile, action: 'enable-plugin', plugin: opts.name })
-  return { ok: true, message: t('pluginMgr.enabled', { name: opts.name }) }
 }
 
 /** Link a source module dir into the DSH profile's node_modules. */
@@ -478,16 +491,17 @@ export function installPluginModule(opts: { profileDir: string; profile: string;
       try { rmSync(target, { recursive: true, force: true }) } catch { /* best effort */ }
       return { ok: false, message: t('pluginMgr.writeFailed') }
     }
+    log.access('installed plugin ' + opts.name + ' on profile ' + opts.profile + ' from ' + opts.source, { profile: opts.profile, action: 'install-plugin', plugin: opts.name, source: opts.source, kind })
+    return { ok: true, message: t('pluginMgr.installed', { name: opts.name }), mechanism: 'bundle' }
   } else {
     // Client / patch plugin: enable it via the cordis.patch.yml insert list.
     if (!editPatchInsert(pr, opts.name, true)) {
       try { rmSync(target, { recursive: true, force: true }) } catch { /* best effort */ }
       return { ok: false, message: t('pluginMgr.writeFailed') }
     }
+    log.access('installed plugin ' + opts.name + ' on profile ' + opts.profile + ' from ' + opts.source, { profile: opts.profile, action: 'install-plugin', plugin: opts.name, source: opts.source, kind })
+    return { ok: true, message: t('pluginMgr.installed', { name: opts.name }), mechanism: 'patch' }
   }
-
-  log.access('installed plugin ' + opts.name + ' on profile ' + opts.profile + ' from ' + opts.source, { profile: opts.profile, action: 'install-plugin', plugin: opts.name, source: opts.source, kind })
-  return { ok: true, message: t('pluginMgr.installed', { name: opts.name }) }
 }
 
 /** Classify a plugin source dir: 'bundle' (dsh.bundle) | 'client' (dsh.client) | 'none'. */
@@ -526,7 +540,8 @@ export function uninstallPlugin(opts: { profileDir: string; profile: string; nam
     }
   }
   // Remove a patch-insert enablement (precise-cache-style plugins).
-  if (patchInsertNames(pr).includes(opts.name)) editPatchInsert(pr, opts.name, false)
+  let mechanism: PluginOpResult['mechanism']
+  if (patchInsertNames(pr).includes(opts.name)) { editPatchInsert(pr, opts.name, false); mechanism = 'patch' }
 
   if (existsSync(join(target, 'package.json'))) {
     try { rmSync(target, { recursive: true, force: true }) } catch { log.warn('could not remove module dir ' + target) }
@@ -536,7 +551,7 @@ export function uninstallPlugin(opts: { profileDir: string; profile: string; nam
   }
 
   log.access('uninstalled plugin ' + opts.name + ' on profile ' + opts.profile, { profile: opts.profile, action: 'uninstall-plugin', plugin: opts.name })
-  return { ok: true, message: t(wasInstalled ? 'pluginMgr.uninstalled' : 'pluginMgr.notInstalled', { name: opts.name }) }
+  return { ok: true, message: t(wasInstalled ? 'pluginMgr.uninstalled' : 'pluginMgr.notInstalled', { name: opts.name }), mechanism }
 }
 
 /**

@@ -23,7 +23,7 @@
  * `out.columns` / `out.rows` drive the size (adaptive). The frame is produced by
  * the pure exported `buildFrame` so the layout is unit-testable without a TTY.
  * ============================================================================= */
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { readState, profileState, acquireLock, listBackups } from './store.ts'
 import { resolveDshHome, profileDir, qaqDir } from './paths.ts'
@@ -36,7 +36,8 @@ import { installPlugin } from './install-plugin.ts'
 import { listPlugins, setPluginEnabled, installPluginModule, uninstallPlugin, type PluginInfo } from './plugin-manager.ts'
 import { resolveDshContext, profileBasename, type DshContext } from './dsh-context.ts'
 import { watchOnce, resolveWatchTarget, type WatchVerdict } from './watch.ts'
-import { isHeartbeatFresh } from './shared-io.ts'
+import { isHeartbeatFresh, pushEvent } from './shared-io.ts'
+import { verifyPatchInsertApplied, watchClientBundles, watchRestartTriggers, resolveClientBundlePaths } from './hot-update.ts'
 import { makeT, type Lang, type T } from './i18n.ts'
 import { displayWidth, padEnd, truncate } from './width.ts'
 import { bannerGradient, hasColor, type RGB } from './color.ts'
@@ -147,6 +148,12 @@ export interface FrameInput {
    *  Rows are pre-rendered with section headers; cursor is the flat backup
    *  index (auto then manual). */
   backups?: BackupsView | null
+  /** When set, the hot-update panel replaces the plugin/log/backup panels.
+   *  `rows` are display-ready toggle lines; `events` the recent activity. */
+  hot?: HotView | null
+  /** Optional live hot-update status line (rendered under the plugin
+   *  connectivity row when non-empty). */
+  hotLine?: string | null
   cols: number
   rows: number
   /** Currently selected menu index (0-based). */
@@ -200,12 +207,30 @@ export interface BackupsView {
   hint: string
 }
 
+/** A rendered hot-update panel (three toggles + recent activity). */
+export interface HotView {
+  title: string
+  /** Display-ready toggle rows (index 0..2 → hotkeys 1..3). */
+  rows: string[]
+  /** Recent hot-update events (newest first, display-ready). */
+  events: string[]
+  hint: string
+}
+
 function readProfileBundle(home: string, profile: string): string[] {
   try {
     const pj = JSON.parse(readFileSync(join(profileDir(home, profile), 'package.json'), 'utf8'))
     const b = pj?.dsh?.profile?.bundles
     return Array.isArray(b) ? b.map(String) : []
   } catch { return [] }
+}
+
+/** Whether the dsh-qaq backup plugin is installed AND enabled for the profile:
+ *  listed in `dsh.profile.bundles` and resolvable from the profile node_modules.
+ *  Pure — unit-testable without a TTY. */
+export function isQaqMounted(home: string, profile: string): boolean {
+  if (!readProfileBundle(home, profile).includes('dsh-qaq')) return false
+  return existsSync(join(profileDir(home, profile), 'node_modules', 'dsh-qaq', 'package.json'))
 }
 
 /** A row: two-space indent, width-truncated. */
@@ -229,6 +254,7 @@ function menuLabels(t: T, lang: Lang): string[] {
     t('tui.menu.plugins'),
     t('tui.menu.logs'),
     t('tui.menu.sideload'),
+    t('tui.menu.hot'),
     t('tui.menu.lang') + '  <' + langNow + '>',
     t('tui.menu.quit'),
   ]
@@ -238,7 +264,7 @@ function menuLabels(t: T, lang: Lang): string[] {
  * look up the per-item detail line (`tui.menudetail.<id>`) for the selection. */
 const MENU_IDS = [
   'launch', 'refresh', 'backup', 'rollback', 'reset',
-  'mount', 'plugins', 'logs', 'sideload', 'lang', 'quit',
+  'mount', 'plugins', 'logs', 'sideload', 'hot', 'lang', 'quit',
 ] as const
 
 /** Map a one-shot `watchOnce` verdict to a short localized outcome label for the
@@ -326,6 +352,10 @@ export function buildFrame(f: FrameInput): string {
   const connKey = f.conn === 'connected' ? 'tui.dsh.conn.connected' : f.conn === 'connecting' ? 'tui.dsh.conn.connecting' : 'tui.dsh.conn.disconnected'
   const connColor = f.conn === 'connected' ? GRN : f.conn === 'connecting' ? YEL : RED
   L.push(row(connColor + '⬤ ' + f.t(connKey) + RESET, W))
+  // Hot-update live status line (watchers / auto-restart toggles).
+  if (f.hotLine) {
+    L.push(row(CYAN + '♨ ' + f.hotLine + RESET, W))
+  }
   if (!compact) {
     const labelW = 12
     const lastFail = p.lastFailure
@@ -392,6 +422,17 @@ export function buildFrame(f: FrameInput): string {
       for (const ln of f.logs.lines) L.push(row(DIM + ln + RESET, W))
     }
     hint = DIM + '1-4 切换日志 · ↑/↓ 滚动 · q/Esc 返回' + RESET
+  } else if (f.hot) {
+    // Hot-update panel: three toggle rows + recent events.
+    const header = BOLD + '── ' + f.hot.title + ' ──' + RESET
+    L.push(row(header, W))
+    L.push(dblRule(W))
+    for (const r of f.hot.rows) L.push(row(r, W))
+    L.push(dblRule(W))
+    const ev = f.hot.events.length === 0 ? [DIM + f.t('tui.hot.events.none') + RESET] : f.hot.events.map((e) => DIM + e + RESET)
+    for (const e of ev) L.push(row(e, W))
+    L.push(dblRule(W))
+    hint = DIM + f.hot.hint + RESET
   } else {
     // Message line
     L.push(row(DIM + (f.message || '') + RESET, W))
@@ -433,9 +474,9 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
   let selected = 0
 
   // Which sub-screen is active: the main menu, the log viewer, the plugin
-  // manager, or the backup manager (the TUI is the all-in-one entry for launch,
-  // watch, logs, backups, plugins).
-  type TuiView = 'menu' | 'logs' | 'plugins' | 'backups'
+  // manager, the backup manager, or the hot-update panel (the TUI is the
+  // all-in-one entry for launch, watch, logs, backups, plugins, hot update).
+  type TuiView = 'menu' | 'logs' | 'plugins' | 'backups' | 'hot'
   let view: TuiView = 'menu'
 
   // === Backup-manager state. ===
@@ -462,6 +503,20 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
   // the truth; the live dsh-qaq inventory may still report the OLD state until
   // DSH reloads. Flip this so the list reflects the real file state immediately.
   let pluginUseFileState = false
+
+  // === Hot-update state (three independent channels). ===
+  /** Channel 1: running client-bundle watch disposer, or null. */
+  let hotWatch: { dispose: () => void; count: number } | null = null
+  /** Channel 3: auto-restart toggles (pseudo-update). */
+  const autoRestart = { bundles: false, dist: false }
+  /** Recent hot-update activity (newest first, capped). */
+  const hotEvents: string[] = []
+  const pushHotEvent = (text: string): void => {
+    hotEvents.unshift(text)
+    if (hotEvents.length > 4) hotEvents.pop()
+  }
+  /** Channel 3's restart-trigger watcher disposer, or null. */
+  let restartWatch: { dispose: () => void } | null = null
   // Paste/drag-drop: the chunk is already UTF-8-decoded by Node, so we just strip
   // bracketed-paste markers (\x1b[200~/201~) and accept printable unicode.
   const resetInputBuf = (): void => { pluginInputBuf = '' }
@@ -568,6 +623,7 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
     let logs: LogsView | null = null
     let plugins: PluginsView | null = null
     let backups: BackupsView | null = null
+    let hot: HotView | null = null
     if (view === 'logs') {
       reloadLogs()
       const maxBody = Math.max(10, Math.max(12, rows) - 3)
@@ -579,15 +635,40 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
     } else if (view === 'backups') {
       refreshBackups()
       backups = renderBackupsView()
+    } else if (view === 'hot') {
+      hot = renderHotView()
     }
     // Real dsh-qaq connectivity (all shared channels fresh).
     const conn: ConnState = dshCtx().connection.state
     const sgStatus = sideGuard && sideGuard.timer
       ? { url: sideGuard.url, last: sideGuard.last, lastOk: sideGuard.lastOk, intervalMs: SIDE_GUARD_INTERVAL_MS }
       : undefined
-    out.write(buildFrame({ home, profile, t, lang, activeGuard, message, report, mode, conn, sideGuard: sgStatus, logs, plugins, backups, cols, rows, selected, color: colorOn, clearFirst: firstRender }))
+    out.write(buildFrame({ home, profile, t, lang, activeGuard, message, report, mode, conn, sideGuard: sgStatus, logs, plugins, backups, hot, hotLine: hotStatusLine(), cols, rows, selected, color: colorOn, clearFirst: firstRender }))
     firstRender = false
   }
+
+  /** Auto-mount the dsh-qaq backup plugin on dashboard open (idempotent: an
+   *  installed+enabled plugin is left untouched). Best-effort — a failure only
+   *  logs a warning and shows the plugin's own message, never blocks the TUI. */
+  function ensureQaqMounted(): void {
+    if (isQaqMounted(home, profile)) return
+    try {
+      const r = installPlugin(home, profile, log, lang)
+      if (r.ok) {
+        pushEvent(home, 'qaq-auto-mount', profile, { ok: true, mounted: r.mounted })
+        log.access('auto-mounted dsh-qaq plugin (dashboard open)', { profile, action: 'auto-mount' })
+        message = r.message
+      } else {
+        log.warn('auto-mount dsh-qaq failed: ' + r.message)
+      }
+    } catch (err) {
+      log.warn('auto-mount dsh-qaq errored: ' + String(err instanceof Error ? err.message : err))
+    }
+  }
+  // Run after the first frame so the dashboard renders instantly; unref'd so it
+  // can never keep the process alive on an immediate quit.
+  const autoMountTimer = setTimeout(() => { ensureQaqMounted(); paint() }, 150)
+  autoMountTimer.unref?.()
 
   /** Page size: plugin rows that fit in the terminal. Shared by render + input. */
   function pluginPerPage(rows: number): number {
@@ -780,8 +861,9 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
       case 6: view = 'plugins'; pluginCursor = 0; pluginPage = 0; pluginFilter = ''; pluginInput = 'none'; pluginInputBuf = ''; paint(); return false
       case 7: enterLogs('error'); paint(); return false
       case 8: view = 'menu'; { const r = await toggleSideGuard(); if (r !== undefined) message = r; } paint(); return false
-      case 9: setLang(lang === 'zh' ? 'en' : 'zh'); refreshReport(); return false
-      case 10: return true // quit
+      case 9: view = 'hot'; paint(); return false
+      case 10: setLang(lang === 'zh' ? 'en' : 'zh'); refreshReport(); return false
+      case 11: return true // quit
       default: return false
     }
   }
@@ -841,6 +923,140 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
     message = t('console.reset.done')
   }
 
+  /** Render the hot-update panel (three toggles + recent activity). */
+  function renderHotView(): HotView {
+    const on = (b: boolean): string => b ? GRN + t('tui.hot.on') + RESET : DIM + t('tui.hot.off') + RESET
+    return {
+      title: t('tui.hot.title', { profile }),
+      rows: [
+        t('tui.hot.row.watch', { state: on(hotWatch !== null) }),
+        t('tui.hot.row.bundles', { state: on(autoRestart.bundles) }),
+        t('tui.hot.row.dist', { state: on(autoRestart.dist) }),
+      ],
+      events: hotEvents.slice(0, 4),
+      hint: t('tui.hot.hint'),
+    }
+  }
+
+  /** The one-line hot-update status shown under the plugin connectivity row. */
+  function hotStatusLine(): string | null {
+    if (!hotWatch && !autoRestart.bundles && !autoRestart.dist) return null
+    const on = (b: boolean): string => b ? t('tui.hot.on') : t('tui.hot.off')
+    return t('tui.hot.line', {
+      watch: on(hotWatch !== null),
+      bundles: on(autoRestart.bundles),
+      dist: on(autoRestart.dist),
+    })
+  }
+
+  /** Channel 1 toggle: watch / stop watching client-plugin bundles. */
+  function toggleHotWatch(): string {
+    if (hotWatch) {
+      hotWatch.dispose()
+      hotWatch = null
+      pushHotEvent(t('tui.hot.watchStopped'))
+      return t('tui.hot.watchStopped')
+    }
+    const ctx = dshCtx()
+    const bundles = resolveClientBundlePaths({ home, profile, checkout: ctx.checkout, poolDir: ctx.poolDir })
+    if (bundles.length === 0) return t('tui.hot.watchNone')
+    hotWatch = {
+      count: bundles.length,
+      dispose: watchClientBundles({
+        home, profile, checkout: ctx.checkout, poolDir: ctx.poolDir,
+        onEvent: (e) => {
+          const label = (e.name ?? '') + (e.detail ? ' — ' + e.detail : '')
+          pushHotEvent(t('tui.hot.ev.' + e.kind, { name: e.name ?? '', detail: e.detail ?? '' }))
+          paint()
+        },
+      }),
+    }
+    pushHotEvent(t('tui.hot.watchStarted', { n: String(bundles.length) }))
+    return t('tui.hot.watchStarted', { n: String(bundles.length) })
+  }
+
+  /** Channel 3 toggle: auto-restart on bundle-list / dist changes. */
+  function toggleAutoRestart(key: 'bundles' | 'dist'): string {
+    autoRestart[key] = !autoRestart[key]
+    restartWatch?.dispose()
+    restartWatch = null
+    if (autoRestart.bundles || autoRestart.dist) {
+      restartWatch = {
+        dispose: watchRestartTriggers({
+          home, profile, checkout: dshCtx().checkout,
+          watchBundles: autoRestart.bundles, watchDist: autoRestart.dist,
+          onTrigger: (reason) => { void restartFor(reason) },
+        }),
+      }
+    }
+    const msg = key === 'bundles'
+      ? (autoRestart.bundles ? t('tui.hot.bundlesOnMsg') : t('tui.hot.bundlesOffMsg'))
+      : (autoRestart.dist ? t('tui.hot.distOnMsg') : t('tui.hot.distOffMsg'))
+    pushHotEvent(msg)
+    return msg
+  }
+
+  /** Channel 3 payload: a supervised restart of the current launcher child. */
+  async function restartSupervised(reason: 'bundles' | 'dist'): Promise<string | undefined> {
+    if (!activeGuard) return t('tui.hot.restart.needLauncher')
+    if (!report) return t('tui.hot.restart.needLauncher')
+    message = t('tui.hot.restart.triggered', { reason })
+    paint()
+    const old = activeGuard
+    old.supervisor.kill()
+    try { await old.supervisor.exit } catch { /* ignore */ }
+    // Give the port a moment to drain before the respawn binds it.
+    await new Promise((r) => setTimeout(r, 800))
+    const guardOpts: GuardOptions = {
+      home, profile, command: report.command, cwd: report.cwd, port: opts.port ?? report.port,
+      dshEnv: {}, autoConfirm: true, retries: 1,
+      confirmGoodMs: opts.confirmMs, uiTimeoutMs: opts.uiTimeoutMs, threshold: opts.threshold,
+    }
+    try {
+      const verdict = await superviseBoot(guardOpts)
+      if (verdict.ok) {
+        activeGuard = { supervisor: verdict.supervisor, release: old.release, url: verdict.url }
+        return t('tui.hot.restart.ok', { reason, url: verdict.url })
+      }
+      if (verdict.rolledBack) {
+        const second = await superviseBoot({ ...guardOpts, autoConfirm: true })
+        if (second.ok) {
+          activeGuard = { supervisor: second.supervisor, release: old.release, url: second.url }
+          return t('tui.hot.restart.ok', { reason, url: second.url })
+        }
+        return second.failureKind === 'env'
+          ? t('cli.envFailure', { error: second.error ?? '' })
+          : t('tui.hot.restart.failed', { reason, kind: second.failureKind })
+      }
+      return verdict.failureKind === 'env'
+        ? t('cli.envFailure', { error: verdict.error ?? '' })
+        : t('tui.hot.restart.failed', { reason, kind: verdict.failureKind })
+    } catch (err) {
+      return t('console.launch.guardError', { msg: String(err instanceof Error ? err.message : err) })
+    }
+  }
+
+  async function restartFor(reason: 'bundles' | 'dist'): Promise<void> {
+    const r = await restartSupervised(reason)
+    if (r !== undefined) { message = r; pushHotEvent(r) }
+    paint()
+  }
+
+  /** Apply a plugin-manager op result; for patch-insert ops on a live DSH,
+   *  verify the config HMR actually landed (channel 2) and report it. */
+  function applyPluginOp(r: { ok: boolean; message: string; mechanism?: 'bundle' | 'patch' }, name: string, wantEnabled: boolean): void {
+    message = r.message
+    pluginUseFileState = true
+    if (!r.ok || r.mechanism !== 'patch' || !isHeartbeatFresh(home)) return
+    void (async () => {
+      const vr = await verifyPatchInsertApplied({ home, name, wantEnabled })
+      if (vr.applied === true) message = t('tui.hot.verify.applied', { name })
+      else if (vr.applied === null) message = t('tui.hot.verify.pending', { name })
+      else message = t('tui.hot.verify.failed', { name, detail: vr.detail ?? '' })
+      paint()
+    })()
+  }
+
   /** Restore the profile from the backup at the flat `cursor` (auto/manual). */
   function restoreBackupAt(cursor: number): void {
     const dir = backupAt(cursor)
@@ -876,6 +1092,7 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
         if (second.ok) { activeGuard = { supervisor: second.supervisor, release: release!, url: second.url }; message = t('console.launch.rolledBackOk', { url: second.url }) }
         else { message = t('console.launch.rolledBackFail', { kind: second.failureKind, dir: join(qaqDir(home), 'rolled-back') }); release?.() }
       } else if (verdict.rollbackCancelled) { message = t('console.launch.cancelledRollback', { dir: join(qaqDir(home), 'rolled-back') }); release?.() }
+      else if (verdict.failureKind === 'env') { message = t('cli.envFailure', { error: verdict.error ?? '' }); release?.() }
       else { message = t('console.launch.failed', { kind: verdict.failureKind, error: verdict.error ?? '' }); release?.() }
     } catch (err) {
       message = t('console.launch.guardError', { msg: String(err instanceof Error ? err.message : err) })
@@ -888,7 +1105,7 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
     let timer: ReturnType<typeof setInterval>
     let dying = false
 
-    const teardown = (): void => { if (dying) return; dying = true; clearInterval(timer); if (sideGuard?.timer) { clearInterval(sideGuard.timer); sideGuard.timer = null } try { stdin.setRawMode?.(false) } catch { /* ignore */ } out.write(SHOW_CURSOR + '\n') }
+    const teardown = (): void => { if (dying) return; dying = true; clearInterval(timer); clearTimeout(autoMountTimer); if (sideGuard?.timer) { clearInterval(sideGuard.timer); sideGuard.timer = null } hotWatch?.dispose(); hotWatch = null; restartWatch?.dispose(); restartWatch = null; try { stdin.setRawMode?.(false) } catch { /* ignore */ } out.write(SHOW_CURSOR + '\n') }
 
     // Raw-mode arrow keys arrive as multi-byte escape sequences; delegate to an
     // incremental KeyParser so partial sequences across 'data' events are kept.
@@ -961,7 +1178,7 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
             if (k === 'enter') {
               const c = pluginScan[Math.max(0, Math.min(pluginScanCursor, pluginScan.length - 1))]
               pluginInput = 'none'
-              if (c) { const ctx = dshCtx(); message = installPluginModule({ profileDir: ctx.profileDir, profile, name: c.name, source: c.dir, poolDir: ctx.poolDir }, new Logger(home), lang).message; pluginUseFileState = true }
+              if (c) { const ctx = dshCtx(); applyPluginOp(installPluginModule({ profileDir: ctx.profileDir, profile, name: c.name, source: c.dir, poolDir: ctx.poolDir }, new Logger(home), lang), c.name, true) }
               pluginScan = []
               paint(); return
             }
@@ -983,9 +1200,9 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
               if (ch === 'q') { view = 'menu'; message = t('tui.msg.placeholder'); paint(); return }
               const ctx = dshCtx()
               const target = currentTarget(ctx, Math.max(12, out.rows || 24))
-              if (ch === 'e' && target) { const r = setPluginEnabled({ profileDir: ctx.profileDir, profile, name: target.name, enabled: true, checkout: ctx.checkout, poolDir: ctx.poolDir }, new Logger(home), lang); message = r.message; pluginUseFileState = true; paint(); return }
-              if (ch === 'd' && target) { const r = setPluginEnabled({ profileDir: ctx.profileDir, profile, name: target.name, enabled: false, checkout: ctx.checkout, poolDir: ctx.poolDir }, new Logger(home), lang); message = r.message; pluginUseFileState = true; paint(); return }
-              if (ch === 'u' && target) { const r = uninstallPlugin({ profileDir: ctx.profileDir, profile, name: target.name, poolDir: ctx.poolDir }, new Logger(home), lang); message = r.message; pluginUseFileState = true; paint(); return }
+              if (ch === 'e' && target) { applyPluginOp(setPluginEnabled({ profileDir: ctx.profileDir, profile, name: target.name, enabled: true, checkout: ctx.checkout, poolDir: ctx.poolDir }, new Logger(home), lang), target.name, true); paint(); return }
+              if (ch === 'd' && target) { applyPluginOp(setPluginEnabled({ profileDir: ctx.profileDir, profile, name: target.name, enabled: false, checkout: ctx.checkout, poolDir: ctx.poolDir }, new Logger(home), lang), target.name, false); paint(); return }
+              if (ch === 'u' && target) { applyPluginOp(uninstallPlugin({ profileDir: ctx.profileDir, profile, name: target.name, poolDir: ctx.poolDir }, new Logger(home), lang), target.name, false); paint(); return }
               if (ch === 'i') { pluginInput = 'path'; pluginInputBuf = ''; message = t('tui.plugins.installPrompt'); paint(); return }
               if (ch === '/') { pluginInput = 'filter'; pluginInputBuf = pluginFilter; paint(); return }
               if (ch === '[') { pluginPage = Math.max(0, pluginPage - 1); pluginCursor = 0; paint(); return }
@@ -1010,6 +1227,24 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
             case 'ctrl-c': done(); return
             case 'char': {
               if (ch === 'q') { view = 'menu'; message = t('tui.msg.placeholder'); paint(); return }
+              break
+            }
+            default: break
+          }
+          continue
+        }
+        if (view === 'hot') {
+          // Hot-update panel keymap: 1 watch bundles · 2 auto-restart on bundle
+          // list · 3 auto-restart on dist · q/Esc back.
+          switch (k) {
+            case 'esc':
+            case 'space': view = 'menu'; message = t('tui.msg.placeholder'); paint(); return
+            case 'ctrl-c': done(); return
+            case 'char': {
+              if (ch === 'q') { view = 'menu'; message = t('tui.msg.placeholder'); paint(); return }
+              if (ch === '1') { message = toggleHotWatch(); paint(); return }
+              if (ch === '2') { message = toggleAutoRestart('bundles'); paint(); return }
+              if (ch === '3') { message = toggleAutoRestart('dist'); paint(); return }
               break
             }
             default: break

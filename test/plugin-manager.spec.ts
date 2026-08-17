@@ -180,6 +180,29 @@ describe('setPluginEnabled (enable/disable in the DSH profile)', () => {
     expect(listPlugins({ profileDir: pr, profile: 're', checkout }).find((p) => p.name === '@deepseek-ai/dsh-base')!.enabled).toBe(true)
   })
 
+  it('reports the mutated mechanism: bundle for bundle-list ops, patch for inserts', () => {
+    // Bundle-style enable → mechanism 'bundle' (takes effect at next boot).
+    const pr = makeProfile('mech-bundle', [])
+    const src = join(checkout, 'packages', 'bundle', 'base')
+    installPluginModule({ profileDir: pr, profile: 'mech-bundle', name: '@deepseek-ai/dsh-base', source: src }, log)
+    const dis = setPluginEnabled({ profileDir: pr, profile: 'mech-bundle', name: '@deepseek-ai/dsh-base', enabled: false, checkout }, log)
+    expect(dis.mechanism).toBe('bundle')
+
+    // Patch-insert (CLIENT plugin) enable → mechanism 'patch' (hot on a live DSH).
+    const pool = join(home, 'profiles', 'node_modules')
+    const pcDir = join(pool, 'dsh-precise-cache')
+    mkdirSync(join(pcDir, 'lib'), { recursive: true })
+    writeFileSync(join(pcDir, 'package.json'), JSON.stringify({
+      name: 'dsh-precise-cache', version: '1.0.0', dsh: { client: { platform: 'web' } },
+      exports: { './client': { default: './lib/client.js' } },
+    }))
+    writeFileSync(join(pcDir, 'lib', 'client.js'), 'window.__PC__ = 1\n')
+    const en = setPluginEnabled({ profileDir: pr, profile: 'mech-bundle', name: 'dsh-precise-cache', enabled: true, poolDir: pool }, log)
+    expect(en.mechanism).toBe('patch')
+    const de = setPluginEnabled({ profileDir: pr, profile: 'mech-bundle', name: 'dsh-precise-cache', enabled: false, poolDir: pool }, log)
+    expect(de.mechanism).toBe('patch')
+  })
+
   it('refuses to enable a plugin whose module is not installed (would break the boot)', () => {
     const pr = makeProfile('noinst', [])
     const r = setPluginEnabled({ profileDir: pr, profile: 'noinst', name: '@deepseek-ai/dsh-base', enabled: true, checkout }, log)

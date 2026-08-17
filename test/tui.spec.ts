@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildFrame, runTui, computeLogWindow, diagnoseVerdict, LOG_TABS, LOG_HEADERS, type LogsView, type PluginsView, type BackupsView, type TuiMode, type SideGuardStatus } from '../src/tui.ts'
+import { buildFrame, runTui, computeLogWindow, diagnoseVerdict, LOG_TABS, LOG_HEADERS, isQaqMounted, type LogsView, type PluginsView, type BackupsView, type HotView, type TuiMode, type SideGuardStatus } from '../src/tui.ts'
 import { makeT } from '../src/i18n.ts'
 import { displayWidth } from '../src/width.ts'
 import type { WatchVerdict } from '../src/watch.ts'
@@ -317,3 +317,80 @@ function indexOfColumn(needle: string): number {
   expect(i).toBeGreaterThanOrEqual(0)
   return i
 }
+
+describe('TUI hot-update panel', () => {
+  function hot(h: HotView, hotLine: string | null = null): string {
+    return stripAnsi(buildFrame({ home, profile: 'web', t: makeT('zh'), lang: 'zh', activeGuard: null, message: 'x', report: null, mode: 'idle', conn: 'disconnected', hot: h, hotLine, logs: null, plugins: null, cols: 90, rows: 30, selected: 0, color: false, clearFirst: false }))
+  }
+
+  it('includes the Hot update menu item (between Sideload and Language)', () => {
+    const sideloadIdx = indexOfColumn('侧载 watch')
+    const langIdx = indexOfColumn('语言  <')
+    const hotIdx = indexOfColumn('热更新')
+    expect(hotIdx).toBeGreaterThan(sideloadIdx)
+    expect(hotIdx).toBeLessThan(langIdx)
+  })
+
+  it('renders the three toggle rows and an events placeholder when active', () => {
+    const h: HotView = {
+      title: '热更新 · web',
+      rows: [
+        '[1] 监控 client 插件 bundle 热更：关',
+        '[2] bundle 列表变化自动重启：关',
+        '[3] web dist 变化自动重启：关',
+      ],
+      events: [],
+      hint: '1 监控 client bundle · 2 bundle 列表变化自动重启 · 3 dist 变化自动重启 · q 返回',
+    }
+    const frame = hot(h)
+    expect(frame).toContain('[1] 监控 client 插件 bundle 热更')
+    expect(frame).toContain('[2] bundle 列表变化自动重启')
+    expect(frame).toContain('[3] web dist 变化自动重启')
+    expect(frame).toContain('（暂无事件）')
+    expect(frame).toContain('1 监控 client bundle') // hint
+  })
+
+  it('renders recent hot-update events newest first', () => {
+    const h: HotView = {
+      title: '热更新 · web',
+      rows: ['[1] 监控 client 插件 bundle 热更：开', '[2] bundle 列表变化自动重启：关', '[3] web dist 变化自动重启：关'],
+      events: ['已验证：dsh-ui-thing', '变更：dsh-ui-thing'],
+      hint: 'h',
+    }
+    const frame = hot(h)
+    expect(frame).toContain('已验证：dsh-ui-thing')
+    expect(frame).toContain('变更：dsh-ui-thing')
+  })
+
+  it('shows the live hot status line when any toggle is on', () => {
+    const frame = hot({ title: '热更新 · web', rows: [], events: [], hint: 'h' }, '热更 开 · bundle 重启 关 · dist 重启 关')
+    expect(frame).toContain('热更 开 · bundle 重启 关 · dist 重启 关')
+  })
+
+  it('renders no hot status line when everything is off', () => {
+    const frame = hot({ title: '热更新 · web', rows: [], events: [], hint: 'h' })
+    expect(frame).not.toContain('热更 ')
+  })
+})
+
+describe('isQaqMounted (auto-mount decision on dashboard open)', () => {
+  const pr = (name: string): string => join(home, 'profiles', name)
+
+  it('is false when dsh-qaq is not in the bundle list', () => {
+    // 'web' profile (from beforeAll) has only @deepseek-ai/dsh-base.
+    expect(isQaqMounted(home, 'web')).toBe(false)
+  })
+
+  it('is false when listed but the module is missing (orphan)', () => {
+    mkdirSync(pr('orphan'), { recursive: true })
+    writeFileSync(join(pr('orphan'), 'package.json'), JSON.stringify({ name: 'x', dsh: { profile: { bundles: ['dsh-qaq'] } } }))
+    expect(isQaqMounted(home, 'orphan')).toBe(false)
+  })
+
+  it('is true when listed and resolvable from the profile node_modules', () => {
+    mkdirSync(join(pr('mounted'), 'node_modules', 'dsh-qaq'), { recursive: true })
+    writeFileSync(join(pr('mounted'), 'package.json'), JSON.stringify({ name: 'x', dsh: { profile: { bundles: ['dsh-qaq'] } } }))
+    writeFileSync(join(pr('mounted'), 'node_modules', 'dsh-qaq', 'package.json'), JSON.stringify({ name: 'dsh-qaq' }))
+    expect(isQaqMounted(home, 'mounted')).toBe(true)
+  })
+})
