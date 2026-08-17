@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import {
   readState, writeState, emptyState, profileState, writeSnapshot, listBackups, readSnapshotKind, AUTO_BACKUP_KEEP,
 } from '../src/store.ts'
-import { maybeRollback, recordSuccess, manualBackup, DEFAULT_THRESHOLD, isUsable, diffConfig, isInAntiLoop } from '../src/rollback.ts'
+import { maybeRollback, recordSuccess, manualBackup, DEFAULT_THRESHOLD, isUsable, diffConfig, isInAntiLoop, validateSnapshot } from '../src/rollback.ts'
 import { qaqDir, profileDir } from '../src/paths.ts'
 import { Logger } from '../src/log.ts'
 
@@ -195,6 +195,63 @@ describe('rollback edge conditions', () => {
     expect(manual.length).toBe(1)
     expect(readSnapshotKind(manual[0])).toBe('manual')
     expect(listBackups(iso, 'auto').length).toBe(AUTO_BACKUP_KEEP) // auto untouched
+    rmSync(iso, { recursive: true, force: true })
+  })
+})
+
+describe('snapshot validation (never restore a corrupt snapshot)', () => {
+  function snap(name: string, pkgJson: string | null, patch: string | null): string {
+    const dir = join(home, 'snaps', name)
+    mkdirSync(dir, { recursive: true })
+    if (pkgJson !== null) writeFileSync(join(dir, 'package.json'), pkgJson)
+    if (patch !== null) writeFileSync(join(dir, 'cordis.patch.yml'), patch)
+    return dir
+  }
+
+  it('accepts a structurally sane snapshot (with or without a patch file)', () => {
+    expect(validateSnapshot(snap('ok1', JSON.stringify({ name: 'p', dsh: { profile: { bundles: ['a'] } } }), '- insert:\n    - id: x\n      name: y\n')).ok).toBe(true)
+    // A missing patch layer is valid (optional).
+    expect(validateSnapshot(snap('ok2', JSON.stringify({ name: 'p' }), null)).ok).toBe(true)
+  })
+
+  it('rejects corrupt package.json / broken bundles / empty or non-array patches', () => {
+    expect(validateSnapshot(snap('bad-json', '{oops', null)).ok).toBe(false)
+    expect(validateSnapshot(snap('no-pkg', null, '[]')).ok).toBe(false)
+    expect(validateSnapshot(snap('bad-bundles', JSON.stringify({ name: 'p', dsh: { profile: { bundles: 'nope' } } }), '[]')).ok).toBe(false)
+    expect(validateSnapshot(snap('empty-patch', JSON.stringify({ name: 'p' }), '')).ok).toBe(false)
+    expect(validateSnapshot(snap('comment-patch', JSON.stringify({ name: 'p' }), '# only comments')).ok).toBe(false)
+    expect(validateSnapshot(snap('scalar-patch', JSON.stringify({ name: 'p' }), 'just a string')).ok).toBe(false)
+  })
+
+  it('rolls back to the newest VALID auto snapshot when the state pointer targets a corrupt one', async () => {
+    const iso = mkdtempSync(join(tmpdir(), 'qaq-rollback-fallback-'))
+    mkdirSync(join(iso, 'profiles', 'web'), { recursive: true })
+    const ilog = new Logger(iso)
+    // 1. Seed a healthy profile + record success (writes latest-good + auto #1).
+    const pr = profileDir(iso, 'web')
+    writeFileSync(join(pr, 'package.json'), JSON.stringify({ name: 'web', dsh: { profile: { bundles: ['@deepseek-ai/dsh-base'] } } }))
+    writeFileSync(join(pr, 'cordis.patch.yml'), '[]')
+    recordSuccess(iso, 'web', ilog, join(pr, 'package.json'), join(pr, 'cordis.patch.yml'))
+    const state0 = readState(iso)
+    const goodTs = state0.profiles['web'].lastGoodSnapshot! // 'history/auto/<ts>'
+    // 2. Corrupt BOTH the pointer target and latest-good (simulating disk damage).
+    writeFileSync(join(qaqDir(iso), goodTs, 'package.json'), '{corrupted')
+    writeFileSync(join(qaqDir(iso), 'latest-good', 'package.json'), '{corrupted')
+    // 3. A NEWER valid auto snapshot exists (a later healthy boot).
+    const pr2 = profileDir(iso, 'web')
+    writeFileSync(join(pr2, 'package.json'), JSON.stringify({ name: 'web', dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', 'dsh-extra'] } } }))
+    recordSuccess(iso, 'web', ilog, join(pr2, 'package.json'), join(pr2, 'cordis.patch.yml'))
+    // 4. Break the live profile and reach the threshold.
+    writeFileSync(join(pr, 'package.json'), JSON.stringify({ name: 'web', dependencies: { 'dsh-broken-theme': 'link:D:/x' } }))
+    const s = readState(iso); const p = profileState(s, 'web'); p.uiFailures = 3
+    writeState(iso, s)
+
+    const out = await maybeRollback({ home: iso, profile: 'web', kind: 'ui', autoConfirm: true, log: ilog })
+    expect(out.triggered).toBe(true)
+    expect(out.restored).toBe(true)
+    // The live config was restored from the newest VALID auto snapshot (has dsh-extra).
+    const restored = JSON.parse(readFileSync(join(pr, 'package.json'), 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+    expect(restored.dsh?.profile?.bundles).toContain('dsh-extra')
     rmSync(iso, { recursive: true, force: true })
   })
 })

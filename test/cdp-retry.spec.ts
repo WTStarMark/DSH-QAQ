@@ -25,6 +25,8 @@ vi.mock('../src/cdp.ts', async (importOriginal) => {
 function fakeHealthySession(): CdpSession {
   return {
     evaluate: async () => ({ bodyText: 'chat area', hasComposer: true, isBootPage: false }),
+    command: async () => undefined,
+    onConsoleError: () => {},
     close: closeMock,
   }
 }

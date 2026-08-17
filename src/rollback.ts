@@ -5,7 +5,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, copyFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { readState, writeState, profileState, restoreSnapshot, pruneSnapshots, writeSnapshot, AUTO_BACKUP_DIR, MANUAL_BACKUP_DIR, AUTO_BACKUP_KEEP, MANUAL_BACKUP_KEEP } from './store.ts'
+import { readState, writeState, profileState, restoreSnapshot, pruneSnapshots, writeSnapshot, listBackups, AUTO_BACKUP_DIR, MANUAL_BACKUP_DIR, AUTO_BACKUP_KEEP, MANUAL_BACKUP_KEEP } from './store.ts'
 import { qaqDir, profileDir } from './paths.ts'
 import { Logger } from './log.ts'
 
@@ -112,20 +112,36 @@ export async function maybeRollback(ctx: RollbackContext): Promise<RollbackOutco
   // Resolve THIS profile's last-good snapshot. Prefer the per-profile
   // state.lastGoodSnapshot ("history/auto/<ts>"); otherwise accept latest-good
   // only when its manifest declares the same profile (so a foreign profile's
-  // data is never used for another).
+  // data is never used for another). Every candidate is VALIDATED before use:
+  // a corrupt snapshot (bad JSON / broken bundles / empty patch) must never be
+  // restored — it would reproduce the very failure the guard exists to repair.
   const q = qaqDir(ctx.home)
-  let good: string | null = null
+  const candidates: string[] = []
+  const seen = new Set<string>()
+  const consider = (dir: string): void => {
+    if (!seen.has(dir)) { seen.add(dir); candidates.push(dir) }
+  }
   if (prof.lastGoodSnapshot) {
     const ref = prof.lastGoodSnapshot.startsWith('history/') ? prof.lastGoodSnapshot : 'history/' + prof.lastGoodSnapshot
-    good = join(q, ref)
-    if (!isUsable(good)) good = null
+    consider(join(q, ref))
+  }
+  consider(join(q, 'latest-good'))
+  // Fallback: the newest VALID auto snapshot for this profile (self-heals a
+  // corrupt state pointer or a clobbered latest-good).
+  for (const dir of listBackups(ctx.home, 'auto')) {
+    if (snapshotProfile(dir) !== ctx.profile) continue
+    consider(dir)
+  }
+  let good: string | null = null
+  for (const dir of candidates) {
+    if (!isUsable(dir) || !validateSnapshot(dir).ok) continue
+    // latest-good only counts when its manifest declares the same profile.
+    if (dir === join(q, 'latest-good') && snapshotProfile(dir) !== ctx.profile) continue
+    good = dir
+    break
   }
   if (!good) {
-    const latest = join(q, 'latest-good')
-    if (isUsable(latest) && snapshotProfile(latest) === ctx.profile) good = latest
-  }
-  if (!good) {
-    ctx.log.warn('no last-good snapshot yet for profile ' + ctx.profile + '; cannot roll back. Start a known-good boot first.')
+    ctx.log.warn('no valid last-good snapshot for profile ' + ctx.profile + '; cannot roll back. Start a known-good boot first.')
     return { triggered: false, snappedGood: false, restored: false, badBackedUp: false }
   }
 
@@ -175,6 +191,39 @@ function snapshotProfile(dir: string): string {
 
 export function isUsable(goodDir: string): boolean {
   return existsSync(join(goodDir, 'package.json'))
+}
+
+/** Result of validating a snapshot's restore-able content. */
+export interface SnapshotValidity { ok: boolean; reason?: string }
+
+/**
+ * Validate a snapshot BEFORE it is ever restored: the package.json must parse
+ * and keep a structurally sane `dsh.profile.bundles`, and a present
+ * cordis.patch.yml must not be empty / comment-only (DSH rejects those — "it
+ * parses to nothing, not to a list"). Restoring a corrupt snapshot would just
+ * reproduce the very boot failure the guard exists to repair, so a failed
+ * validation forces the rollback to fall back to an older valid snapshot.
+ */
+export function validateSnapshot(dir: string): SnapshotValidity {
+  const pjPath = join(dir, 'package.json')
+  if (!existsSync(pjPath)) return { ok: false, reason: 'missing package.json' }
+  let pkg: unknown
+  try { pkg = JSON.parse(readFileSync(pjPath, 'utf8')) } catch { return { ok: false, reason: 'package.json is not valid JSON' } }
+  if (!pkg || typeof pkg !== 'object') return { ok: false, reason: 'package.json is not an object' }
+  const bundles = (pkg as { dsh?: { profile?: { bundles?: unknown } } }).dsh?.profile?.bundles
+  if (bundles !== undefined && !Array.isArray(bundles)) return { ok: false, reason: 'dsh.profile.bundles is not an array' }
+  const patchPath = join(dir, 'cordis.patch.yml')
+  if (existsSync(patchPath)) {
+    let text: string
+    try { text = readFileSync(patchPath, 'utf8') } catch { return { ok: false, reason: 'cordis.patch.yml is unreadable' } }
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '')
+    const body = lines.filter((l) => !l.startsWith('#'))
+    // A patch with no content at all is a boot failure on DSH (parses to nothing).
+    if (body.length === 0) return { ok: false, reason: 'cordis.patch.yml is empty/comment-only (DSH rejects it)' }
+    // The first real line must look like a YAML array (`[`) or a list item (`-`).
+    if (!/^\[/.test(body[0]) && !/^-/.test(body[0])) return { ok: false, reason: 'cordis.patch.yml is not an array/insert list' }
+  }
+  return { ok: true }
 }
 function writeFileQuiet(path: string, data: string): void {
   try { writeFileSync(path, data) } catch { /* ignore */ }

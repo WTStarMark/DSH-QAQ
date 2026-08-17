@@ -15,6 +15,24 @@ const HOST_FAIL_KEYWORDS = [
   'unhandled exception',
 ]
 
+/** Strings in host output that indicate an ENVIRONMENT / dependency failure —
+ *  a problem a config rollback cannot fix (Node version, missing modules,
+ *  permissions). These must never be treated as a definitive config failure
+ *  (which would roll back a perfectly good config in vain). */
+const ENV_FAIL_KEYWORDS = [
+  'enoent',
+  'eacces',
+  'eperm',
+  'err_module_not_found',
+  'cannot find module',
+  'cannot find package',
+  'module not found',
+  'unsupported engine',
+  'incompatible with',
+  'was compiled against a different node.js version',
+  'err_ossl',
+]
+
 export interface DshSpawnOptions {
   /** Command parts, e.g. ['dsh','web'] or ['node','--import','tsx/esm','apps/cli/src/bin.ts','web']. */
   command: string[]
@@ -39,6 +57,8 @@ export interface DshSupervisor {
   output: () => string
   /** Whether any host fail-loud keyword appeared in output. */
   hasHostFailureMarker: () => boolean
+  /** Whether any environment/dependency failure keyword appeared in output. */
+  hasEnvFailureMarker: () => boolean
   kill: () => void
 }
 
@@ -75,6 +95,10 @@ export function spawnDsh(opts: DshSpawnOptions): DshSupervisor {
     const text = chunks.join('').toLowerCase()
     return HOST_FAIL_KEYWORDS.some(k => text.includes(k.toLowerCase()))
   }
+  const hasEnvFailureMarker = (): boolean => {
+    const text = chunks.join('').toLowerCase()
+    return ENV_FAIL_KEYWORDS.some(k => text.includes(k.toLowerCase()))
+  }
 
   // Readiness: the port must open AND the child must survive a short grace
   // window. A child that exits before the port opens (or right after — e.g. a
@@ -109,5 +133,5 @@ export function spawnDsh(opts: DshSpawnOptions): DshSupervisor {
   }
   probe()
 
-  return { child, ready, exit, output: () => chunks.join(''), hasHostFailureMarker, kill: () => { try { child.kill() } catch { /* ignore */ } } }
+  return { child, ready, exit, output: () => chunks.join(''), hasHostFailureMarker, hasEnvFailureMarker, kill: () => { try { child.kill() } catch { /* ignore */ } } }
 }

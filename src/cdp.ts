@@ -35,7 +35,36 @@ export function findBrowser(): string | null {
 export interface CdpSession {
   /** Evaluate an expression and return its JSON value (or null on error/failure). */
   evaluate(expr: string): Promise<unknown>
+  /** Send an arbitrary CDP command (e.g. `Runtime.enable`) and return its result. */
+  command(method: string, params?: Record<string, unknown>): Promise<unknown>
+  /** Subscribe to console ERROR events (requires `Runtime.enable` first). */
+  onConsoleError(cb: (text: string) => void): void
   close(): Promise<void>
+}
+
+/**
+ * Extract the human-readable text of a console error from a CDP
+ * `Runtime.consoleAPICalled` event message. Pure — unit-testable without a
+ * browser. Returns null when the message is not a console error.
+ */
+export function parseConsoleError(msg: unknown): string | null {
+  if (!msg || typeof msg !== 'object') return null
+  const m = msg as { method?: unknown; params?: { type?: unknown; args?: unknown } }
+  if (m.method !== 'Runtime.consoleAPICalled') return null
+  const type = m.params?.type
+  if (type !== 'error' && type !== 'assert') return null
+  const args = m.params?.args
+  if (!Array.isArray(args)) return null
+  const parts: string[] = []
+  for (const a of args) {
+    if (!a || typeof a !== 'object') continue
+    const v = (a as { value?: unknown; description?: unknown }).value
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') { parts.push(String(v)); continue }
+    const d = (a as { description?: unknown }).description
+    if (typeof d === 'string' && d) { parts.push(d); continue }
+    if (v !== undefined && v !== null) { parts.push(String(v)); continue }
+  }
+  return parts.length > 0 ? parts.join(' ') : null
 }
 
 export interface LaunchOptions { debugPort: number }
@@ -87,6 +116,7 @@ class CdpsSessionImpl implements CdpSession {
   private id = 0
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
   private closed = false
+  private consoleErrorListeners = new Set<(text: string) => void>()
   constructor(private child: ChildProcess, private udd: string, private ws: WebSocket) {
     ws.on('message', (data) => {
       let msg: any
@@ -96,10 +126,19 @@ class CdpsSessionImpl implements CdpSession {
         this.pending.delete(msg.id)
         if (msg.error) p.reject(new Error('CDP error: ' + JSON.stringify(msg.error)))
         else p.resolve(msg.result)
+        return
+      }
+      // Event (no id): forward console errors to subscribers (best-effort).
+      if (msg.method) {
+        const text = parseConsoleError(msg)
+        if (text !== null) {
+          for (const cb of this.consoleErrorListeners) { try { cb(text) } catch { /* listener must not break the session */ } }
+        }
       }
     })
     ws.on('close', () => {
       this.closed = true
+      this.consoleErrorListeners.clear()
       for (const [, p] of this.pending) p.reject(new Error('CDP closed'))
       this.pending.clear()
     })
@@ -110,6 +149,12 @@ class CdpsSessionImpl implements CdpSession {
       this.pending.set(id, { resolve, reject })
       this.ws.send(JSON.stringify({ id, method, params: params ?? {} }))
     })
+  }
+  command(method: string, params?: Record<string, unknown>): Promise<unknown> {
+    return this.cmd(method, params)
+  }
+  onConsoleError(cb: (text: string) => void): void {
+    this.consoleErrorListeners.add(cb)
   }
   async evaluate(expr: string): Promise<unknown> {
     try {

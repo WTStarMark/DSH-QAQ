@@ -28,6 +28,14 @@ export interface UiVerdict {
    *  not activate … waiting for service"), so the guard may roll back on the
    *  first hit instead of waiting out the general same-kind threshold. */
   definitive?: boolean
+  /** Console ERROR messages sampled during the probe window (bundle load
+   *  failures, runtime exceptions) — a degradation signal beyond the DOM. */
+  consoleErrors?: string[]
+}
+
+/** Attach sampled console errors to a verdict (pure — trivially testable). */
+export function withConsoleErrors(v: UiVerdict, errors: string[]): UiVerdict {
+  return errors.length > 0 ? { ...v, consoleErrors: errors } : v
 }
 
 const DOM_PROBE =`
@@ -133,8 +141,15 @@ export async function detectUi(url: string, timeoutMs = 25000, port = 0): Promis
     const debugPort = port > 0 ? port : (9000 + Math.floor(Math.random() * 900))
     try {
       const session = await launchSession({ debugPort })
-      try { return await pollUi(session, url, timeoutMs) }
-      finally { await session.close() }
+      try {
+        // Sample console ERROR events during the probe window — a degradation
+        // signal beyond the DOM (bundle load failures, runtime exceptions).
+        await session.command('Runtime.enable').catch(() => {})
+        const errors: string[] = []
+        session.onConsoleError((text) => { if (errors.length < 10) errors.push(text) })
+        const verdict = await pollUi(session, url, timeoutMs)
+        return withConsoleErrors(verdict, errors)
+      } finally { await session.close() }
     } catch (err) {
       lastErr = err
       const msg = err instanceof Error ? err.message : ''

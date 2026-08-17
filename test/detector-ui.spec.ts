@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyDom, parseFailedEntries, extractFailureDetail, isDefinitiveUi, FAILED_MARKER, pollUi } from '../src/detector-ui.ts'
+import { classifyDom, parseFailedEntries, extractFailureDetail, isDefinitiveUi, FAILED_MARKER, pollUi, withConsoleErrors } from '../src/detector-ui.ts'
 import type { DomSnapshot } from '../src/detector-ui.ts'
 import type { CdpSession } from '../src/cdp.ts'
 
@@ -60,7 +60,7 @@ web boot: 1 entry did not activate dsh-broken-theme: pending (waiting for servic
 
 describe('pollUi at-least-once probe (--confirm-ms 0 regression)', () => {
   function fakeSession(snap: DomSnapshot): CdpSession {
-    return { evaluate: async () => snap, close: async () => {} }
+    return { evaluate: async () => snap, command: async () => undefined, onConsoleError: () => {}, close: async () => {} }
   }
 
   it('reads the DOM at least once even with a 0ms timeout (no immediate error)', async () => {
@@ -78,5 +78,19 @@ describe('pollUi at-least-once probe (--confirm-ms 0 regression)', () => {
   it('still fails fast on a red screen with a 0ms timeout', async () => {
     const v = await pollUi(fakeSession({ bodyText: 'Failed to load plugins', hasComposer: false, isBootPage: false }), 'http://127.0.0.1:3080', 0)
     expect(v.kind).toBe('failed')
+  })
+})
+
+describe('withConsoleErrors (degradation signal attachment)', () => {
+  const ok = { ok: true, kind: 'ok' as const, bodyText: 'x' }
+
+  it('leaves the verdict untouched when no errors were sampled', () => {
+    const v = withConsoleErrors(ok, [])
+    expect(v.consoleErrors).toBeUndefined()
+  })
+
+  it('attaches sampled console errors to the verdict', () => {
+    const v = withConsoleErrors(ok, ['Failed to load /plugins/x/client.js', 'TypeError: x is not a function'])
+    expect(v.consoleErrors).toEqual(['Failed to load /plugins/x/client.js', 'TypeError: x is not a function'])
   })
 })

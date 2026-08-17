@@ -11,9 +11,11 @@
  */
 import { spawnDsh, type DshSupervisor } from './spawn-dsh.ts'
 import { detectUi } from './detector-ui.ts'
+import { detectFailedFibers } from './degraded.ts'
 import { readState, writeState, profileState } from './store.ts'
 import { maybeRollback, recordSuccess } from './rollback.ts'
 import { resolveDshHome, profileDir } from './paths.ts'
+import { pushEvent } from './shared-io.ts'
 import { Logger } from './log.ts'
 import { join } from 'node:path'
 export interface GuardOptions {
@@ -35,7 +37,7 @@ export interface GuardOptions {
 
 export interface BootFailure {
   ok: false
-  failureKind: 'host' | 'ui' | 'unknown'
+  failureKind: 'host' | 'ui' | 'unknown' | 'env'
   error?: string
   /** True only when a rollback was actually applied (config restored to last-good). */
   rolledBack: boolean
@@ -43,6 +45,9 @@ export interface BootFailure {
   rollbackCancelled?: boolean
   /** True when every tolerance retry was also still failing (the last attempt). */
   retriesExhausted: boolean
+  /** True for an environment/dependency failure (Node version, missing module,
+   *  permissions) — a config rollback cannot fix it, so it was never counted. */
+  envFailure?: boolean
 }
 
 export interface BootHealthy {
@@ -57,7 +62,7 @@ export type BootVerdict = BootHealthy | BootFailure
 /** One unattributed boot attempt: returns a raw verdict WITHOUT counting/rollback.
  * `definitive` is set on a host failure where the child died with a fail-loud
  * boot marker (a deterministic config error — retrying cannot help). */
-type AttemptResult = { kind: 'host' | 'ui' | 'unknown'; error: string; killed: boolean; definitive?: boolean } | { kind: 'ok'; error: string; supervisor: DshSupervisor }
+type AttemptResult = { kind: 'host' | 'ui' | 'unknown' | 'env'; error: string; killed: boolean; definitive?: boolean } | { kind: 'ok'; error: string; supervisor: DshSupervisor }
 async function bootAttempt(opts: GuardOptions, command: string[], port: number): Promise<AttemptResult> {
   const home = opts.home ?? resolveDshHome()
   const url = 'http://127.0.0.1:' + port
@@ -80,7 +85,11 @@ async function bootAttempt(opts: GuardOptions, command: string[], port: number):
     const code = await Promise.race([supervision.exit, sleep(1500)]) as (number | null | undefined)
     supervision.kill()
     const detail = hostError ?? ('host not ready on port ' + port)
-    return { kind: 'host', error: detail + (code === undefined ? '' : ' exit=' + code), killed: true, definitive: supervision.hasHostFailureMarker() }
+    // An environment/dependency marker (Node version, missing module, EPERM…)
+    // means a config rollback cannot fix the boot — classify it separately so
+    // it is never counted toward a rollback.
+    const env = supervision.hasEnvFailureMarker()
+    return { kind: env ? 'env' : 'host', error: detail + (code === undefined ? '' : ' exit=' + code), killed: true, definitive: !env && supervision.hasHostFailureMarker() }
   }
 
   let ui
@@ -133,6 +142,7 @@ function isTransient(attempt: { kind: string; error: string; definitive?: boolea
   // A host that died with a fail-loud boot marker (plugin tree failed to load)
   // is deterministic — a retry can only reproduce it, so count it immediately.
   if (attempt.definitive) return false
+  if (attempt.kind === 'env') return true // env/dependency flake (e.g. a Windows EPERM) — retry once; never counted/rolled back
   if (attempt.kind === 'host') return true // host-not-ready / early exit is typically a flake or env issue; retry once
   if (attempt.kind === 'unknown') return true
   // A bundle-load "did not activate" that is NOT a service-inject pending is a load flake.
@@ -189,7 +199,14 @@ export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
 
   // Count the failure and decide rollback.
   const lastOk = last as Exclude<AttemptResult, { kind: 'ok' }>
-  const kind = lastOk.kind === 'ui' ? 'ui' : lastOk.kind === 'host' ? 'host' : 'unknown'
+  const kind = lastOk.kind === 'ui' ? 'ui' : lastOk.kind === 'host' ? 'host' : lastOk.kind === 'env' ? 'env' : 'unknown'
+  if (kind === 'env') {
+    // Environment/dependency failures (Node version, missing modules,
+    // permissions) cannot be repaired by a config rollback — counting them
+    // would roll back a perfectly good config in vain. Report and stop.
+    log.error('environment/dependency failure (rollback cannot fix this): ' + lastOk.error)
+    return { ok: false, failureKind: 'env', error: lastOk.error, rolledBack: false, retriesExhausted: exhausted, envFailure: true }
+  }
   log.error((kind === 'ui' ? 'UI red screen: ' : 'boot failed: ') + lastOk.error)
   if (kind === 'host' || kind === 'ui') {
     incrementFailure(home, profile, kind, lastOk.error, log)
@@ -222,7 +239,19 @@ async function confirmStable(supervisor: DshSupervisor, url: string, opts: Guard
   // Clamp the probe budget to >= 1ms: a 0 confirm window must still re-read the DOM once.
   try {
     const recheck = await detectUi(url, Math.max(1, Math.min(confirmMs, 15000)))
-    if (recheck.kind === 'ok') return { ok: true }
+    if (recheck.kind === 'ok') {
+      // Non-red-screen degradation signal: enabled plugins whose fiber ended in
+      // the failed state (visible only via the in-process inventory, not the
+      // DOM). Never counts/rolls back on its own — it is an advisory.
+      const home = opts.home ?? resolveDshHome()
+      const degraded = detectFailedFibers(home)
+      if (degraded.length) {
+        const names = degraded.map((d) => d.name).join(', ')
+        log.warn('UI healthy but enabled plugins are in failed fiber state (degraded): ' + names)
+        pushEvent(home, 'ui-degraded', opts.profile, { entries: names })
+      }
+      return { ok: true }
+    }
     if (recheck.kind === 'failed') return { ok: false, kind: 'ui', error: recheck.failureDetail ?? 'Failed to load plugins' }
     return { ok: false, kind: 'unknown', error: 'UI did not stay settled during confirmation (kind=' + recheck.kind + ')' }
   } catch (err) {

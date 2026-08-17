@@ -244,6 +244,13 @@ async function cmdDsh(args: CliArgs): Promise<void> {
       return
     }
 
+    // Environment/dependency failure: a config rollback cannot fix it, so it
+    // was never counted — point the operator at the real cause.
+    if (verdict.failureKind === 'env') {
+      log.error(t('cli.envFailure', { error: verdict.error ?? '' }))
+      return
+    }
+
     // Failed, no rollback (e.g. no last-good yet, or anti-loop fence active).
     log.warn('boot failed (kind=' + verdict.failureKind + (verdict.error ? '; ' + verdict.error : '') + '). Not auto-restarting.')
   } catch (err) {

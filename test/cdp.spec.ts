@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { findBrowser } from '../src/cdp.ts'
+import { findBrowser, parseConsoleError } from '../src/cdp.ts'
 
 /**
  * `findBrowser` scans platform environment paths (Program Files, LOCALAPPDATA)
@@ -67,5 +67,35 @@ describe('findBrowser candidate resolution', () => {
     process.env['PROGRAMFILES(X86)'] = ''
     process.env.LOCALAPPDATA = ''
     expect(() => findBrowser()).not.toThrow()
+  })
+})
+
+describe('parseConsoleError (CDP console-error extraction)', () => {
+  it('extracts the text of a Runtime.consoleAPICalled error event', () => {
+    const msg = {
+      method: 'Runtime.consoleAPICalled',
+      params: {
+        type: 'error',
+        args: [
+          { type: 'string', value: 'Failed to load resource' },
+          { type: 'object', description: 'net::ERR_FAILED' },
+        ],
+      },
+    }
+    expect(parseConsoleError(msg)).toBe('Failed to load resource net::ERR_FAILED')
+  })
+
+  it('ignores non-error events and non-console messages', () => {
+    expect(parseConsoleError({ method: 'Runtime.consoleAPICalled', params: { type: 'log', args: [{ type: 'string', value: 'hi' }] } })).toBeNull()
+    expect(parseConsoleError({ method: 'Runtime.consoleAPICalled', params: { type: 'warning', args: [{ type: 'string', value: 'w' }] } })).toBeNull()
+    expect(parseConsoleError({ method: 'Network.responseReceived', params: {} })).toBeNull()
+    expect(parseConsoleError({ method: 'Runtime.consoleAPICalled', params: { type: 'error', args: [] } })).toBeNull()
+  })
+
+  it('is defensive against malformed messages', () => {
+    expect(parseConsoleError(null)).toBeNull()
+    expect(parseConsoleError(undefined)).toBeNull()
+    expect(parseConsoleError('nope')).toBeNull()
+    expect(parseConsoleError({ method: 'Runtime.consoleAPICalled' })).toBeNull()
   })
 })

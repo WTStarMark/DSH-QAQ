@@ -164,7 +164,7 @@ function writeSnapshotHome(home: string, profileName: string, profileDir: string
  * DSH is a host-side, zero-dependency consumer here: we read the event shape
  * defensively and never import any package.
  */
-interface SessionEventShape { type?: string; data?: { source?: { kind?: string }; content?: unknown } }
+interface SessionEventShape { type?: string; data?: { source?: ({ kind?: string } & Record<string, unknown>); content?: unknown } & Record<string, unknown> }
 
 /** True iff a session event is a genuine human user message. */
 export function isUserConversation(event: SessionEventShape | undefined | null): boolean {

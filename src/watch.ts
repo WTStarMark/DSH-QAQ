@@ -13,6 +13,7 @@
  */
 import { join } from 'node:path'
 import { detectUi } from './detector-ui.ts'
+import { detectFailedFibers } from './degraded.ts'
 import { incrementFailure } from './guard.ts'
 import { maybeRollback, recordSuccess } from './rollback.ts'
 import { profileDir } from './paths.ts'
@@ -102,6 +103,13 @@ export async function watchOnce(opts: WatchOptions, log: Logger): Promise<WatchV
     recordSuccess(opts.home, opts.profile, logCtx,
       join(profileDir(opts.home, opts.profile), 'package.json'),
       join(profileDir(opts.home, opts.profile), 'cordis.patch.yml'))
+    // Non-red-screen degradation advisory: enabled plugins in a failed fiber.
+    const degraded = detectFailedFibers(opts.home)
+    if (degraded.length) {
+      const names = degraded.map((d) => d.name).join(', ')
+      logCtx.warn('watch: UI healthy but enabled plugins are in failed fiber state (degraded): ' + names)
+      pushEvent(opts.home, 'ui-degraded', opts.profile, { entries: names })
+    }
     logCtx.info('watch: healthy at ' + url)
     return { ok: true, kind: 'ok', port: target.port, source: target.source, rolledBack: false }
   }

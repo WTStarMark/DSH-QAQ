@@ -168,6 +168,8 @@ async function runLaunch(home: string, report: EnvReport, profile: string, opts:
       process.stdout.write(c(RED, t('console.launch.rolledBackFail', { kind: second.failureKind, dir: join(qaqDir(home), 'rolled-back') })) + '\n');
     } else if (verdict.rollbackCancelled) {
       process.stdout.write(c(YEL, t('console.launch.cancelledRollback', { dir: join(qaqDir(home), 'rolled-back') })) + '\n');
+    } else if (verdict.failureKind === 'env') {
+      process.stdout.write(c(RED, t('cli.envFailure', { error: verdict.error ?? '' })) + '\n');
     } else {
       process.stdout.write(c(RED, t('console.launch.failed', { kind: verdict.failureKind, error: verdict.error ?? '' })) + '\n');
     }

@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readState } from '../src/store.ts'
+import { readState, writeState, profileState } from '../src/store.ts'
 import { recordSuccess } from '../src/rollback.ts'
 import { Logger } from '../src/log.ts'
 
@@ -31,13 +31,14 @@ vi.mock('../src/detector-ui.ts', () => ({
 import { superviseBoot, resolveBootTarget, parsePortFrom } from '../src/guard.ts'
 
 let home = ''
-function mkSupervisor() {
+function mkSupervisor(ready: Promise<boolean> = Promise.resolve(true)) {
   return {
     child: { exitCode: null as number | null },
-    ready: Promise.resolve(true),
+    ready,
     exit: Promise.resolve(null),
     output: () => '',
     hasHostFailureMarker: () => false,
+    hasEnvFailureMarker: () => false,
     kill: killMock,
   }
 }
@@ -141,6 +142,34 @@ describe('guard.bootAttempt leak regression', () => {
     expect(state.profiles['web'].hostFailures).toBe(1)
     // Anti-loop fence armed so a still-broken restart cannot loop.
     expect(state.profiles['web'].rolledBackAt).toBeDefined()
+  })
+
+  it('classifies an environment/dependency failure separately (never counted, never rolled back)', async () => {
+    // The child failed to start with an env marker (e.g. EPERM / Node engine
+    // mismatch). A config rollback cannot fix this, so it must NOT advance the
+    // failure counters (which would roll back a perfectly good config in vain).
+    // Seed pre-existing counters to prove they are left untouched.
+    const s0 = readState(home)
+    const p0 = profileState(s0, 'web')
+    p0.hostFailures = 5
+    p0.uiFailures = 7
+    writeState(home, s0)
+
+    const sup = mkSupervisor(Promise.reject(new Error('spawn EPERM: operation not permitted')))
+    sup.hasEnvFailureMarker = () => true
+    spawnDshMock.mockReturnValue(sup)
+
+    const v = await superviseBoot({ home, command: ['fake'], cwd: '.', profile: 'web', retries: 0, uiTimeoutMs: 50, confirmGoodMs: 0 })
+
+    expect(v.ok).toBe(false)
+    if (!v.ok) {
+      expect(v.failureKind).toBe('env')
+      expect(v.envFailure).toBe(true)
+      expect(v.rolledBack).toBe(false)
+    }
+    const state = readState(home)
+    expect(state.profiles['web'].hostFailures).toBe(5)
+    expect(state.profiles['web'].uiFailures).toBe(7)
   })
 
   it('rolls back on the FIRST deterministic UI red screen instead of waiting out the threshold', async () => {
