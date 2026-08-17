@@ -3,9 +3,9 @@ import { mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync, rmSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  readState, writeState, emptyState, profileState, writeSnapshot,
+  readState, writeState, emptyState, profileState, writeSnapshot, listBackups, readSnapshotKind, AUTO_BACKUP_KEEP,
 } from '../src/store.ts'
-import { maybeRollback, recordSuccess, manualBackup, DEFAULT_THRESHOLD, isUsable, diffConfig } from '../src/rollback.ts'
+import { maybeRollback, recordSuccess, manualBackup, DEFAULT_THRESHOLD, isUsable, diffConfig, isInAntiLoop } from '../src/rollback.ts'
 import { qaqDir, profileDir } from '../src/paths.ts'
 import { Logger } from '../src/log.ts'
 
@@ -111,5 +111,90 @@ describe('rollback', () => {
     expect(ap.lastGoodSnapshot).toBeDefined()
     expect(ap.rolledBackAt).toBeUndefined()
     expect(isUsable(join(qaqDir(home), 'latest-good'))).toBe(true)
+  })
+})
+
+describe('rollback edge conditions', () => {
+  it('isInAntiLoop is false when nothing was rolled back', () => {
+    const f = isInAntiLoop(60000)
+    expect(f({})).toBe(false)
+    expect(f({ rolledBackAt: undefined })).toBe(false)
+  })
+
+  it('isInAntiLoop is true inside the window and false after it', () => {
+    const f = isInAntiLoop(60000)
+    const now = Date.now()
+    expect(f({ rolledBackAt: new Date(now - 1000).toISOString() }, now)).toBe(true)
+    expect(f({ rolledBackAt: new Date(now - 61000).toISOString() }, now)).toBe(false)
+  })
+
+  it('a malformed rolledBackAt does not disable the fence forever (treats it as no-fence)', async () => {
+    const s = readState(home)
+    const p = profileState(s, 'badts')
+    p.uiFailures = 3
+    p.rolledBackAt = 'not-a-date'
+    writeState(home, s)
+    // With no last-good snapshot the outcome is "cannot roll back" (not a crash);
+    // the malformed timestamp must not throw and must not silently allow looping.
+    const out = await maybeRollback({ home, profile: 'badts', kind: 'ui', autoConfirm: true, log })
+    expect(out.triggered).toBe(false)
+  })
+
+  it('diffConfig aligns identical lines and marks only genuine changes', () => {
+    const cur = 'a\nkeep\nold'
+    const tgt = 'a\nkeep\nnew'
+    const d = diffConfig(cur, tgt)
+    expect(d).toContain('-  old')
+    expect(d).toContain('+  new')
+    expect(d).toContain('   keep')
+    expect(d.match(/\s+keep/g)?.length).toBe(1) // keep appears exactly once
+  })
+
+  it('diffConfig detects a truncated version in either direction', () => {
+    const d1 = diffConfig('l1\nl2\nl3', 'l1\nl2')
+    expect(d1).toContain('-  l3')
+    const d2 = diffConfig('l1', 'l1\nl2\nl3')
+    expect(d2).toContain('+  l2')
+    expect(d2).toContain('+  l3')
+  })
+
+  it('manualBackup writes to the MANUAL set only (does not touch counters/latest-good)', () => {
+    setupProfile('manual', '{"name":"good"}')
+    const s = readState(home); const p = profileState(s, 'manual'); p.hostFailures = 4
+    writeState(home, s)
+    manualBackup(home, 'manual', log)
+    // A manual backup is independent: it does NOT clear counters.
+    const after = readState(home)
+    expect(after.profiles['manual'].hostFailures).toBe(4)
+    // The manual snapshot lives under history/manual and is usable.
+    const manual = listBackups(home, 'manual')
+    expect(manual.length).toBe(1)
+    expect(isUsable(manual[0])).toBe(true)
+    const manifest = JSON.parse(readFileSync(join(manual[0], 'manifest.json'), 'utf8'))
+    expect(manifest.profile).toBe('manual')
+    expect(manifest.kind).toBe('manual')
+  })
+
+  it('auto recordSuccess and manualBackup are independent sets with separate quotas', () => {
+    // Use an isolated home so exact counts aren't polluted by the shared one.
+    const iso = mkdtempSync(join(tmpdir(), 'qaq-rollback-iso-'))
+    mkdirSync(join(iso, 'profiles', 'web'), { recursive: true })
+    writeFileSync(join(iso, 'profiles', 'web', 'package.json'), '{}')
+    writeFileSync(join(iso, 'profiles', 'web', 'cordis.patch.yml'), '[]')
+    const ilog = new Logger(iso)
+    // Fire several successes -> auto set, pruned to AUTO_BACKUP_KEEP.
+    for (let i = 0; i < AUTO_BACKUP_KEEP + 2; i++) {
+      recordSuccess(iso, 'web', ilog, join(profileDir(iso, 'web'), 'package.json'), join(profileDir(iso, 'web'), 'cordis.patch.yml'))
+    }
+    const auto = listBackups(iso, 'auto')
+    expect(auto.length).toBe(AUTO_BACKUP_KEEP)
+    expect(readSnapshotKind(auto[0])).toBe('auto')
+    // A manual backup is separate: adding one here must not disturb the auto set.
+    manualBackup(iso, 'web', ilog)
+    const manual = listBackups(iso, 'manual')
+    expect(manual.length).toBe(1)
+    expect(readSnapshotKind(manual[0])).toBe('manual')
+    expect(listBackups(iso, 'auto').length).toBe(AUTO_BACKUP_KEEP) // auto untouched
+    rmSync(iso, { recursive: true, force: true })
   })
 })

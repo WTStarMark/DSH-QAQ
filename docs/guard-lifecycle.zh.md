@@ -78,6 +78,17 @@ function isTransient(attempt): boolean {
 - 重试计数逻辑：`for (attempt = 0; attempt <= retries; attempt++)`，`retries` 用尽或遇到非瞬态失败即退出循环。
 - `retriesExhausted` 语义：**仅当实际用尽了容忍重试次数**才为 true（真实红屏是"非瞬态"，提前退出时该值为 false）。
 
+### 确定性 UI 红屏 → 首次即回滚
+
+`detector-ui.isDefinitiveUi(detail)` 识别**确定性的 Web UI 配置错误**——典型如
+`web boot: 1 entry did not activate <pkg>: pending (waiting for service: <svc>)`
+（某个 client fiber 等待一个 loader 树永不提供的服务，因而永远 pending）。这类红屏
+**每次启动都必然复现**，重试无意义，因此与宿主 fail-loud 同理：`bootAttempt` 里
+`kind:'ui'` 且 `ui.definitive` 为 true 时返回 `definitive: true`，`superviseBoot` 据此把
+**有效阈值降为 1**（`lastOk.definitive ? 1 : opts.threshold`），首次命中即回滚，
+仍受 5 分钟防死循环围栏约束。侧载 `qaq watch` 的 `watchOnce` 走同一语义
+（`failAndMaybeRollback(..., definitive)`）。
+
 ---
 
 ## 4. 确认窗口（`confirmStable`）
@@ -116,6 +127,7 @@ for (attempt = 0; attempt <= retries; attempt++) {
 // 收尾：计数 + 决定回滚
 if (kind === 'host' || kind === 'ui') {
   incrementFailure(...)             // 同类计数 +1，异类清零；写 lastFailure
+  // 确定性失败（宿主 fail-loud / 确定性 UI 红屏）首次即回滚 → 有效阈值 1，见 §"确定性 UI 红屏 → 首次即回滚"
   rolled = await maybeRollback(...) // 见 state-and-rollback.md
   return { ok: false, ..., rolledBack, rollbackCancelled, retriesExhausted }
 }

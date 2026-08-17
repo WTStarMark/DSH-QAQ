@@ -20,7 +20,7 @@ Related: [Architecture Overview](architecture.md) · [Guard Lifecycle](guard-lif
 ### 1.2 `findAutoCheckout` scan scope
 
 1. **Ancestor chain**: walk up to 5 levels from `process.cwd()`, checking `apps/cli/src/bin.ts` / `index.ts` / `dist/index.js`.
-2. **Sibling scan** (key for the lazy launcher): scan **every direct child** of the cwd's parent directory; any child containing `apps/cli` wins — this covers the typical layout where QAQ and `deepseek-harness` sit side by side (after double-clicking `qaq-web.cmd` the cwd is QAQ, the checkout is the sibling).
+2. **Sibling scan** (key for launching from within the repo): scan **every direct child** of the cwd's parent directory; any child containing `apps/cli` wins — this covers the typical layout where QAQ and `deepseek-harness` sit side by side (the cwd is QAQ, the checkout is the sibling).
 
 > PATH separator is chosen per platform: `;` on Windows, `:` on POSIX (drive letters like `C:\` make a blanket `/[;:]/` split unsafe).
 
@@ -41,7 +41,7 @@ Related: [Architecture Overview](architecture.md) · [Guard Lifecycle](guard-lif
 
 ### 2.0 Language (src/i18n.ts)
 
-The whole user-facing surface (console menu, preflight problems, install-plugin results, CLI usage/fatal hints) is localized via a small dictionary (`en` / `zh`, keys like `console.menu.1`, `env.PORT_BUSY.msg`, `plugin.mountedResult`; `{var}` interpolation). Resolution order: `--lang en|zh` → `$QAQ_LANG` → default `zh` (the original behavior). The launchers pin it: `bin\qaq-web.cmd` passes `--lang en`, `bin\qaq-web.zh.cmd` passes `--lang zh`. New strings must be added to **both** dictionaries or they fall back to the key itself.
+The whole user-facing surface (TUI dashboard, preflight problems, install-plugin results, CLI usage/fatal hints) is localized via a small dictionary (`en` / `zh`, keys like `console.menu.1`, `env.PORT_BUSY.msg`, `plugin.mountedResult`; `{var}` interpolation). Resolution order: `--lang en|zh` → `$QAQ_LANG` → default `zh` (the original behavior); inside the TUI you can also press `l` to toggle en/zh live. New strings must be added to **both** dictionaries or they fall back to the key itself.
 
 ### 2.1 Menu
 
@@ -94,7 +94,7 @@ DSH resolves each `dsh.profile.bundles` entry in order, reads its `dsh.bundle.pa
 
 ### 3.3 Plugin behavior
 
-`dsh-qaq` runs inside the DSH host: it awaits `ctx.get('loader')?.await?.()` for the loader tree to settle, then snapshots the profile config into `~/.dsh/.qaq/latest-good` + `history/<ts>/` (each with a manifest). **A failed boot is never snapshotted** (`.catch(() => {})`).
+`dsh-qaq` runs inside the DSH host: it awaits `ctx.get('loader')?.await?.()` for the loader tree to settle, then only reports **presence** (heartbeat / inventory / state) — it no longer snapshots last-good on settle. The real last-good backup happens **only after a real user conversation**: `ctx.on('session/event')` delivering a `user/message` whose `source.kind === 'user'` (a direct human prompt; plugin-injected `kind === 'plugin'` and model/tool messages do not count). Because only a human actually sending a message proves the boot is usable, a host that settles but renders a web red screen — where the user can never talk — is **never** recorded as last-good. A failed boot (settle rejection) is likewise never snapshotted (`.catch(() => {})`).
 
 ---
 
@@ -102,10 +102,10 @@ DSH resolves each `dsh.profile.bundles` entry in order, reads its `dsh.bundle.pa
 
 | File | Purpose |
 |------|---------|
-| `qaq-install.cmd` / `qaq-install.zh.cmd` | one-click install: check Node >= 22 → pnpm deps (npx fallback) → esbuild build → verify the artifact |
-| `qaq-web.cmd` / `qaq-web.zh.cmd` | double-click opens the lazy launcher console: check node_modules → `node --import tsx/esm src\cli.ts console --lang en` / `--lang zh` |
 | `qaq.cmd` | pass-through wrapper (`qaq <args>`) |
 | `qaq.mjs` | Node entry: uses dist when present, otherwise runs the source via tsx (`import.meta.url`-relative) |
+| `qaq setup` | one-command install: check Node >= 22 → pnpm deps (npx fallback) → esbuild build + plugin lib → verify the artifact |
+| `qaq tui` / `qaq console` | full-screen live dashboard (TTY) or a compact menu otherwise |
 
 **Encoding red line**: `.zh.cmd` files must be **GBK(CP936) + CRLF** (zh-CN cmd parses batch files as ANSI). Saving them as UTF-8 garbles the Chinese banner and the garbage fragments get executed as commands. When editing them, read/write with `Encoding.GetEncoding(936)` via PowerShell, use `%~dp0` for relative location, and never write absolute paths. The default-named `.cmd` files are pure ASCII (no encoding risk).
 

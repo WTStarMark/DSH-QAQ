@@ -46,3 +46,43 @@ describe('installPlugin', () => {
     expect(existsSync(join(d, 'package.json'))).toBe(true);
   });
 });
+
+describe('installPlugin edge cases', () => {
+  it('warns about a stale manual insert row but still mounts cleanly', () => {
+    const pr = profileDir(home, 'stale');
+    mkdirSync(pr, { recursive: true });
+    writeFileSync(join(pr, 'package.json'), JSON.stringify({ name: 'p', dsh: { profile: { bundles: [] } } }));
+    // A leftover user-layer row referencing the plugin = duplicate entry id hazard.
+    writeFileSync(join(pr, 'cordis.patch.yml'), '- insert:\n    - id: dsh-qaq\n      name: x\n');
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    const r = installPlugin(home, 'stale', new Logger(home));
+    expect(r.ok).toBe(true);
+    // The warning about the stale row must have been emitted.
+    expect(warn.mock.calls.some(([m]) => String(m).includes('stale'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('unmounts cleanly (does not write the manifest) when the node_modules link cannot be created', () => {
+    const pr = profileDir(home, 'nolink');
+    mkdirSync(pr, { recursive: true });
+    const before = JSON.stringify({ name: 'p', dsh: { profile: { bundles: [] } } });
+    writeFileSync(join(pr, 'package.json'), before);
+    writeFileSync(join(pr, 'cordis.patch.yml'), '[]\n');
+    // Occupy the module path with a plain FILE so the junction cannot be made.
+    mkdirSync(join(pr, 'node_modules'), { recursive: true });
+    writeFileSync(join(pr, 'node_modules', 'dsh-qaq'), '');
+    const r = installPlugin(home, 'nolink', new Logger(home));
+    expect(r.ok).toBe(false);
+    expect(r.mounted).toBe(false);
+    // The profile manifest must be left byte-identical (the failed link undoes it).
+    expect(readFileSync(join(pr, 'package.json'), 'utf8')).toBe(before);
+  });
+
+  it('reports a profile whose package.json is not valid JSON without crashing', () => {
+    const pr = profileDir(home, 'badjson');
+    mkdirSync(pr, { recursive: true });
+    writeFileSync(join(pr, 'package.json'), '{not json');
+    const r = installPlugin(home, 'badjson', new Logger(home));
+    expect(r.ok).toBe(false);
+  });
+});

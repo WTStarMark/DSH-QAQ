@@ -14,11 +14,13 @@
     "qaq": "./bin/qaq.mjs"
   },
   "scripts": {
-    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --banner:js=\"import { createRequire as __qaqCRequire } from 'module'; const require = __qaqCRequire(import.meta.url);\" --outfile=dist/qaq.mjs",
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --banner:js=\"import { createRequire as __qaqCRequire } from 'module'; const require = __qaqCRequire(import.meta.url);\" --outfile=dist/qaq.mjs && pnpm run build:plugin",
+    "build:plugin": "node packages/dsh-qaq/scripts/build.mjs",
+    "check:plugin-lib": "node scripts/check-plugin-lib.mjs",
     "qaq": "tsx src/cli.ts",
     "test": "vitest run",
     "smoke": "node tools/smoke.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p packages/dsh-qaq/tsconfig.json"
   },
   "dependencies": {
     "ws": "^8.18.0"

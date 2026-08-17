@@ -15,6 +15,7 @@ import { Logger } from './log.ts'
 import { preflight, problemBanner, launchSummary, type EnvReport } from './env.ts'
 import { superviseBoot, type GuardOptions } from './guard.ts'
 import type { DshSupervisor } from './spawn-dsh.ts'
+import { runTui } from './tui.ts'
 import { manualBackup, manualRestore, isUsable } from './rollback.ts'
 import { acquireLock } from './store.ts'
 import { installPlugin } from './install-plugin.ts'
@@ -289,6 +290,9 @@ async function runConsole(home: string, profile: string, opts: ConsoleOpts, ask:
 
 /** Entry point: open the interactive console. */
 export async function openConsole(profile = 'web', opts: ConsoleOpts = {}): Promise<void> {
+  // On a real interactive terminal prefer the live full-screen TUI; otherwise
+  // fall back to the plain one-screen-at-a-time menu below.
+  if (await runTui(opts, profile)) return;
   const home = resolveDshHome();
   lang = opts.lang ?? resolveLang([]);
   t = makeT(lang);

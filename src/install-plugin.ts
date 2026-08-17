@@ -12,7 +12,8 @@
  * boot ("duplicate loader entry id") — a real bug caught by the integration
  * test. A stale manual insert row left by an older QAQ is only warned about.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, symlinkSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { profileDir } from './paths.ts'
@@ -37,6 +38,13 @@ export function installPlugin(home: string, profile: string, log: Logger, lang: 
   const pluginPkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name: string }
   const name = pluginPkg.name
   if (!name) return { ok: false, mounted: false, message: t('plugin.noName') }
+
+  // The mounted bundle loads lib/index.js at boot (junction -> this package dir).
+  // lib/ is generated (not committed), so rebuild it first if it is missing or
+  // older than the plugin source — a stale/missing lib would either silently run
+  // old code (killing the `qaq watch` heartbeat discovery, P1) or fail the very
+  // boot this tool exists to guard. Best-effort: any failure is reported, not swallowed.
+  ensurePluginBuilt(plugin, t, log)
 
   const pr = profileDir(home, profile)
   const pjPath = join(pr, 'package.json')
@@ -99,4 +107,38 @@ export function installPlugin(home: string, profile: string, log: Logger, lang: 
   log.info(t('plugin.mountedLog', { name: profile, already: already ? t('plugin.already') : '' }))
   log.access('dsh-qaq plugin mounted on profile ' + profile + (already ? ' (already)' : ''), { profile, action: 'install-plugin', already })
   return { ok: true, mounted: true, message: t('plugin.mountedResult', { name: profile, dir: pr }) }
+}
+
+/**
+ * Ensure the dsh-qaq plugin's lib/ build artifacts exist and are up to date with
+ * its source before the module is mounted. lib/ is generated (not committed), so
+ * a fresh clone or an editor-only change to the plugin source leaves it either
+ * absent or stale. Rebuild in that case (or always when a refresh is requested),
+ * using the same build.mjs that pnpm build runs. Best-effort: any failure is
+ * surfaced to the operator rather than silently proceeding with a stale plugin.
+ */
+function ensurePluginBuilt(plugin: string, t: T, log: Logger): void {
+  const libJs = join(plugin, 'lib', 'index.js')
+  const srcTs = join(plugin, 'src', 'index.ts')
+  try {
+    if (existsSync(libJs) && existsSync(srcTs)) {
+      const libMtime = statSyncMtime(libJs)
+      const srcMtime = statSyncMtime(srcTs)
+      if (libMtime >= srcMtime) return // already up to date
+    }
+    const buildScript = join(plugin, 'scripts', 'build.mjs')
+    if (!existsSync(buildScript)) {
+      log.warn('dsh-qaq build script missing at ' + buildScript + '; mounting with existing lib (if any)')
+      return
+    }
+    log.info('dsh-qaq lib is missing/stale; rebuilding plugin (build.mjs)…')
+    execFileSync(process.execPath, [buildScript], { cwd: plugin, stdio: 'inherit' })
+  } catch (err) {
+    log.warn('could not rebuild dsh-qaq plugin: ' + String(err instanceof Error ? err.message : err) + '. Mounting with existing lib (if any).')
+  }
+}
+
+/** Best-effort mtime (ms) for a file; -1 when unreadable. */
+function statSyncMtime(p: string): number {
+  try { return statSync(p).mtimeMs } catch { return -1 }
 }

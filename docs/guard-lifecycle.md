@@ -80,6 +80,10 @@ function isTransient(attempt): boolean {
 - Loop: `for (attempt = 0; attempt <= retries; attempt++)`; breaks when retries run out or a non-transient failure occurs.
 - `retriesExhausted` semantics: **true only when the tolerance retries were actually used up** (a genuine red screen is non-transient, so an early exit leaves it false).
 
+### Deterministic UI red screen → first-hit rollback
+
+`detector-ui.isDefinitiveUi(detail)` recognizes **deterministic Web-UI config errors** — notably `web boot: 1 entry did not activate <pkg>: pending (waiting for service: <svc>)` (a client fiber waiting forever on a service the loader tree never provides). Such a red screen reproduces identically every boot, so retrying is pointless: like a host fail-loud marker, `bootAttempt` returns `kind:'ui'` with `definitive: true` when `ui.definitive` is set, and `superviseBoot` lowers the **effective threshold to 1** (`lastOk.definitive ? 1 : opts.threshold`) — rollback on the first hit, still gated by the 5-minute anti-loop fence. The sideload `qaq watch` path (`watchOnce`) uses the same semantics via `failAndMaybeRollback(..., definitive)`.
+
 ---
 
 ## 4. Confirmation window (`confirmStable`)
@@ -117,12 +121,13 @@ for (attempt = 0; attempt <= retries; attempt++) {
 // Wrap-up: count and decide rollback
 if (kind === 'host' || kind === 'ui') {
   incrementFailure(...)             // same-kind +1, other kind reset; writes lastFailure
-  // A definitive host crash (process died + fail-loud marker) rolls back on the
-  // FIRST hit — it is a deterministic config error, not a flake — so its
-  // effective threshold is 1 regardless of the configured --threshold. Ambiguous
-  // failures keep the general same-kind threshold. The anti-loop fence and the
-  // Y/N confirmation (unless --yes) still gate the rollback as usual.
-  effectiveThreshold = kind === 'host' && definitive ? 1 : opts.threshold
+  // Any definitive failure — a host process died with a fail-loud marker, OR a
+  // deterministic UI red screen ("1 entry did not activate … waiting for
+  // service") — is a deterministic config error, not a flake, so its effective
+  // threshold is 1 regardless of the configured --threshold. Ambiguous failures
+  // keep the general same-kind threshold. The anti-loop fence and the Y/N
+  // confirmation (unless --yes) still gate the rollback as usual.
+  effectiveThreshold = definitive ? 1 : opts.threshold
   rolled = await maybeRollback({ ..., threshold: effectiveThreshold })
   return { ok: false, ..., rolledBack, rollbackCancelled, retriesExhausted }
 }

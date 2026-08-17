@@ -39,6 +39,18 @@ export interface QaqState {
 /** Files that make up one configuration snapshot. */
 export type SnapshotFile = 'package.json' | 'cordis.patch.yml'
 
+/** Backup kind labels, kept in each snapshot's manifest for the TUI list. */
+export type BackupKind = 'auto' | 'manual'
+/** Auto backups live here (guard on confirmed health / plugin after a real
+ *  user conversation). Kept independently. */
+export const AUTO_BACKUP_DIR = 'history/auto'
+/** Manual backups live here (`qaq backup` / TUI manual backup). Kept
+ *  independently of auto. */
+export const MANUAL_BACKUP_DIR = 'history/manual'
+/** Independent retention quotas: 10 auto, 3 manual. */
+export const AUTO_BACKUP_KEEP = 10
+export const MANUAL_BACKUP_KEEP = 3
+
 const STATE_FILENAME = 'state.json'
 
 /** Create the qaq state root if needed. */
@@ -130,7 +142,7 @@ export function profileState(state: QaqState, profile: string): ProfileState {
 }
 
 /** Snapshot the given list of source paths (profile package.json + patch) into a snapshot dir. */
-export function writeSnapshot(home: string, snapDir: string, sources: { packageJson: string; patchYml: string | null }, profile: string): void {
+export function writeSnapshot(home: string, snapDir: string, sources: { packageJson: string; patchYml: string | null }, profile: string, kind: BackupKind = 'auto'): void {
   mkdirSync(snapDir, { recursive: true })
   copyFileSync(sources.packageJson, join(snapDir, 'package.json'))
   if (sources.patchYml && existsSync(sources.patchYml)) {
@@ -138,8 +150,17 @@ export function writeSnapshot(home: string, snapDir: string, sources: { packageJ
   }
   writeFileSync(join(snapDir, 'manifest.json'), JSON.stringify({
     profile,
+    kind,
     ts: new Date().toISOString(),
   }, null, 2), 'utf8')
+}
+
+/** Read a snapshot dir's manifest kind ('auto' | 'manual'), defaulting to 'auto'. */
+export function readSnapshotKind(snapDir: string): BackupKind {
+  try {
+    const m = JSON.parse(readFileSync(join(snapDir, 'manifest.json'), 'utf8')) as { kind?: BackupKind }
+    return m.kind === 'manual' ? 'manual' : 'auto'
+  } catch { return 'auto' }
 }
 
 /** List snapshot directories (history/, rolled-back/) newest-first; only valid snapshot dirs (have manifest.json). */
@@ -153,12 +174,17 @@ export function listSnapshots(home: string, sub: string): string[] {
     .sort((a, b) => (basename(b) < basename(a) ? -1 : basename(b) > basename(a) ? 1 : 0))
 }
 
-/** Prune history/ to at most `keep` newest snapshots. */
+/** Prune a snapshot subdir (history/auto, history/manual, …) to `keep` newest. */
 export function pruneSnapshots(home: string, sub: string, keep: number): void {
   const snapshots = listSnapshots(home, sub)
   for (const dir of snapshots.slice(keep)) {
     try { rmSync(dir, { recursive: true, force: true }) } catch { /* best effort */ }
   }
+}
+
+/** List the backups of ONE kind (newest-first), each with its dir + kind. */
+export function listBackups(home: string, kind: BackupKind): string[] {
+  return listSnapshots(home, kind === 'manual' ? MANUAL_BACKUP_DIR : AUTO_BACKUP_DIR)
 }
 
 /** Copy a snapshot's restore-able files (package.json, cordis.patch.yml) back into a profile dir. */

@@ -5,7 +5,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, copyFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { readState, writeState, profileState, restoreSnapshot, pruneSnapshots, writeSnapshot } from './store.ts'
+import { readState, writeState, profileState, restoreSnapshot, pruneSnapshots, writeSnapshot, AUTO_BACKUP_DIR, MANUAL_BACKUP_DIR, AUTO_BACKUP_KEEP, MANUAL_BACKUP_KEEP } from './store.ts'
 import { qaqDir, profileDir } from './paths.ts'
 import { Logger } from './log.ts'
 
@@ -110,9 +110,9 @@ export async function maybeRollback(ctx: RollbackContext): Promise<RollbackOutco
   }
 
   // Resolve THIS profile's last-good snapshot. Prefer the per-profile
-  // state.lastGoodSnapshot ("history/<ts>"); otherwise accept latest-good only
-  // when its manifest declares the same profile (so a foreign profile's data
-  // is never used for another).
+  // state.lastGoodSnapshot ("history/auto/<ts>"); otherwise accept latest-good
+  // only when its manifest declares the same profile (so a foreign profile's
+  // data is never used for another).
   const q = qaqDir(ctx.home)
   let good: string | null = null
   if (prof.lastGoodSnapshot) {
@@ -181,8 +181,10 @@ function writeFileQuiet(path: string, data: string): void {
 }
 
 /**
- * Record a success: zero both counters, set lastSuccess, and snapshot the
- * current profile as latest-good + history.
+ * Record a success — an AUTOMATIC backup (the guard confirmed a healthy boot, or
+ * the sideload watched a healthy foreign boot): zero both counters, set
+ * lastSuccess, snapshot the current profile into the auto backup set, and clear
+ * the anti-loop fence.
  */
 export function recordSuccess(home: string, profile: string, log: Logger, packageJsonPath: string, patchYmlPath: string | null): void {
   const state = readState(home)
@@ -196,23 +198,33 @@ export function recordSuccess(home: string, profile: string, log: Logger, packag
   prof.lastSuccess = new Date().toISOString()
   // Clear the anti-loop fence on a genuine success.
   delete prof.rolledBackAt
-  prof.lastGoodSnapshot = 'history/' + ts
+  prof.lastGoodSnapshot = AUTO_BACKUP_DIR + '/' + ts
   writeState(home, state)
 
   const q = qaqDir(home)
-  // latest-good: write fresh, keep as the canonical copy.
-  writeSnapshot(home, join(q, 'latest-good'), { packageJson: packageJsonPath, patchYml: patchYmlPath }, profile)
-  // history: time-stamped copy, prune to 5.
-  writeSnapshot(home, join(q, 'history', ts), { packageJson: packageJsonPath, patchYml: patchYmlPath }, profile)
-  pruneSnapshots(home, 'history', 5)
-  log.access('recorded success and snapshot for profile ' + profile, { profile, ts, snapshots: 'latest-good + history/' + ts })
-  log.info('recorded success and snapshot for profile ' + profile)
+  // Auto backup set: latest-good (canonical) + timestamped history/auto copy.
+  writeSnapshot(home, join(q, 'latest-good'), { packageJson: packageJsonPath, patchYml: patchYmlPath }, profile, 'auto')
+  writeSnapshot(home, join(q, AUTO_BACKUP_DIR, ts), { packageJson: packageJsonPath, patchYml: patchYmlPath }, profile, 'auto')
+  pruneSnapshots(home, AUTO_BACKUP_DIR, AUTO_BACKUP_KEEP)
+  log.access('recorded auto success snapshot for profile ' + profile, { profile, ts, snapshots: 'latest-good + ' + AUTO_BACKUP_DIR + '/' + ts })
+  log.info('recorded auto success snapshot for profile ' + profile)
 }
 
-/** Manual backup: snapshot current profile into latest-good. */
+/**
+ * Manual backup: snapshot the current profile into the MANUAL set only
+ * (`history/manual/`, keep 3), independent of the auto set. Unlike a success
+ * record, a manual backup does NOT touch counters, lastSuccess, lastGoodSnapshot,
+ * or the anti-loop fence.
+ */
 export function manualBackup(home: string, profile: string, log: Logger): void {
   const pr = profileDir(home, profile)
-  recordSuccess(home, profile, log, join(pr, 'package.json'), join(pr, 'cordis.patch.yml'))
+  const ts = new Date().toISOString().replace(/[:.]/g, '-')
+  const q = qaqDir(home)
+  const snapDir = join(q, MANUAL_BACKUP_DIR, ts)
+  writeSnapshot(home, snapDir, { packageJson: join(pr, 'package.json'), patchYml: join(pr, 'cordis.patch.yml') }, profile, 'manual')
+  pruneSnapshots(home, MANUAL_BACKUP_DIR, MANUAL_BACKUP_KEEP)
+  log.access('manual backup for profile ' + profile + ' -> ' + snapDir, { profile, action: 'manual-backup', snapDir })
+  log.info('manual backup for profile ' + profile)
 }
 
 /** Manual restore from a snapshot dir. */

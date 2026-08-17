@@ -38,11 +38,18 @@ QAQ 的检测线（L3）是唯一可靠的**非侵入**探测：用 headless Chr
 | 状态存储 | `src/store.ts` | state.json 原子读写、快照管理、守卫锁 | `readState()`, `writeState()`, `acquireLock()` |
 | 回滚引擎 | `src/rollback.ts` | 阈值判定、坏配置备份、防循环、成功记账 | `maybeRollback()`, `recordSuccess()` |
 | 环境发现 | `src/env.ts` | dsh/browser/port 自动发现 + 启动前自检 | `preflight()`, `resolveCommand()` |
+| 命令面 | `src/cli.ts` | 子命令解析 + 各命令处理器（status/backup/restore/reset/watch/dsh…） | `parseCli()` |
+| 真实 DSH 上下文 | `src/dsh-context.ts` | 解析真实 DSH 安装（home/profile/checkout）+ 进程/插件连接状态 | `resolveDshContext()`, `findDshPackages()` |
 | 交互控制台 | `src/console.ts` | 懒人脚本 CMD 菜单 GUI | `openConsole()` |
 | 插件挂载 | `src/install-plugin.ts` | 把 dsh-qaq 插件装入 DSH profile（bundle 机制） | `installPlugin()` |
+| 全屏仪表盘 | `src/tui.ts` | raw-mode TTY 仪表盘：实时状态、快捷键、语言切换 | `runTui()` |
+| 安装 | `src/setup.ts` | 一条命令装依赖 + 构建 | `runSetup()` |
 | 路径助手 | `src/paths.ts` | `$DSH_HOME` / `.qaq` / profile 路径推导 | `resolveDshHome()`, `qaqDir()`, `profileDir()` |
 | 日志 | `src/log.ts` | 结构化多文件轮转日志 | `Logger` |
-| DSH 备份插件 | `packages/dsh-qaq/` | 在 DSH host 内部，宿主稳定后写配置快照 | `apply()`, `name` |
+| 插件↔CLI 共享通道 | `src/shared-io.ts` | 插件与守卫之间的 JSON 心跳 / 健康状态 / `events.jsonl` | `readPluginHeartbeat()`, `pushEvent()` |
+| 外部守卫接管 | `src/watch.ts` | `qaq watch`：监视并非 CLI 启动的 DSH（按心跳发现），计数 + 回滚 | `watchOnce()`, `resolveWatchTarget()` |
+| Webhook 投递 | `src/webhook.ts` | 无依赖的启动失败 / 回滚事件 POST 通知 | `deliverWebhooks()` |
+| DSH 备份插件 | `packages/dsh-qaq/` | 在 DSH host 内部：真实用户对话后写 last-good 快照 + 持续向共享通道写心跳/清单/状态 | `apply()`, `isUserConversation()` |
 
 ---
 
@@ -110,12 +117,13 @@ $DSH_HOME/profiles/web/
   package.json        ── 声明 dsh.profile.bundles（插件层列表）
   cordis.patch.yml    ── 用户 patch 层（QAQ 从不修改）
 
-         │ 健康确认后（守卫） / 宿主稳定后（dsh-qaq 插件）
+         │ 健康确认后（守卫） / 真实用户对话后（dsh-qaq 插件）
          ▼
 $DSH_HOME/.qaq/
   state.json          ── 计数 / lastSuccess / lastGoodSnapshot / rolledBackAt
   latest-good/        ── 最近一次确认健康的配置副本（package.json + cordis.patch.yml + manifest.json）
-  history/<ts>/       ── 最多 5 份时间戳历史快照
+  history/auto/<ts>/  ── 自动备份（守卫确认健康 / 插件真实对话后；独立 10 份配额）
+  history/manual/<ts>/── 手动备份（qaq backup / TUI `[3]`；独立 3 份配额）
   rolled-back/<ts>/   ── 回滚前保存的坏配置（人工恢复用）
   log/                ── qaq.log / error.log / access.log / host.log
   .guard.lock         ── PID 感知守卫锁
@@ -152,6 +160,6 @@ packages/dsh-qaq/           # DSH 备份插件（独立包，lib/index.js 为构
 bin/                        # 懒人脚本启动器（.cmd 为 GBK 编码，勿用 UTF-8 改写）
 qaq-test-plugins/           # 集成测试夹具（dsh-broken-theme → 确定性红屏）
 tools/                      # smoke.mjs / rollback-test.ps1 / loop-test.ps1
-test/                       # vitest 单测（42 个）
+test/                       # vitest 单测（63 个）
 docs/                       # 本文档集合
 ```

@@ -20,19 +20,26 @@ DSH's Web surface has a failure mode where the **host is alive but the UI red-sc
 
 ## Install / Quick start
 
-**One-click (Windows)**: double-click `bin\qaq-install.cmd` (installs deps + builds), then double-click `bin\qaq-web.cmd` to open the interactive guard console — no commands to remember. (Chinese launcher variants: `bin\qaq-web.zh.cmd` / `bin\qaq-install.zh.cmd`.)
+**One command**: `qaq setup` installs dependencies + builds, then `qaq tui` opens the full-screen live guard dashboard.
 
 Or manually:
 
 ```bash
 pnpm install
-pnpm build   # emits a single-file executable at dist/qaq.mjs
+pnpm build   # bundles dist/qaq.mjs AND regenerates packages/dsh-qaq/lib (the plugin)
 ```
+
+> `bin/qaq.cmd` runs the CLI through tsx for development; the global `qaq`
+> command (from `pnpm build`) runs the bundled `dist/qaq.mjs`. Both share the
+> same CLI surface. `qaq console` / `qaq tui` opens the full-screen dashboard
+> on a TTY, or a compact menu otherwise.
 
 Take over `dsh web` from a visible CMD window:
 
-```cmd
-bin\qaq-web.cmd [--port 3080] [--yes]
+```bash
+qaq tui --port 3080
+# or a single supervised boot without the dashboard:
+qaq dsh web --port 3080 --yes
 ```
 
 or directly:
@@ -55,45 +62,55 @@ qaq dsh web --port 3080 --yes
 | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `qaq dsh web [--port N] [--yes]`             | supervised startup: detect host/UI failure -> count -> roll back when triggered -> restart (with anti-loop) |
 | `qaq status`                                 | print a summary of `~/.dsh/.qaq/state.json`                                                                 |
-| `qaq backup [--profile web]`                 | snapshot the current profile as last-good                                                                   |
+| `qaq backup [--profile web]`                 | snapshot the current profile into the MANUAL backup set (independent 3-snapshot quota)                                                                   |
 | `qaq restore --to <snapDir> [--profile web]` | restore a profile from a snapshot directory                                                                 |
 | `qaq reset --profile web`                    | zero the failure counters                                                                                   |
-| `qaq console`                                | open the interactive menu (lazy launcher, same as `bin\qaq-web.cmd`)                                        |
+| `qaq tui` / `qaq console`                   | open the full-screen live dashboard (or a compact menu on non-TTY)                                          |
+| `qaq setup`                                | install dependencies + build (one command)                                                                  |
 | `qaq install-plugin [--profile web]`         | auto-mount the `dsh-qaq` backup plugin into a profile                                                       |
 
 Global: `--yes` auto-confirms rollbacks.
 
-## One-click console (`qaq console` / `bin\qaq-web.cmd`)
+## Dashboard (`qaq tui` / `qaq console`)
 
-A menu in a visible CMD window. The console is **bilingual**: `bin\qaq-web.cmd` shows English, `bin\qaq-web.zh.cmd` shows Chinese; a bare `qaq console` defaults to Chinese (`--lang en` or `$QAQ_LANG=en` switches). The menu items correspond to:
+On a terminal (`qaq tui`) QAQ shows a **full-screen, auto-refreshing dashboard** — the all-in-one entry for launching, watching, browsing logs, and managing plugins. It shows guard status, the current operating mode (launcher / sideload / idle), failure counters, last-good snapshot, plugin mount state, a **log viewer**, and a **plugin manager**. On a non-TTY it falls back to a one-screen menu (`qaq console`). The interface is **bilingual** — press `10` in the TUI to toggle en/zh (a bare `qaq console` defaults to Chinese; `$QAQ_LANG` or `--lang` overrides). The actions available are:
 
 ```
-[1] Start the guard (take over dsh web)  — supervised launch (fresh preflight each time)
-[2] View status                          — counters / last success / last snapshot
-[3] Back up the current profile as last-good
-[4] Roll back to last-good
-[5] Reset failure counters
-[6] Mount the dsh-qaq backup plugin      — idempotent, rollback-safe (never breaks a boot)
-[7] View logs (error / access / host)
-[q] Quit
+[1]  supervise a dsh web boot (guard)   — fresh preflight each time, rollback + restart (launcher mode)
+[2]  refresh state panel                — also auto-refreshes every ~1s
+[3]  back up the current profile into the MANUAL backup set
+[4]  backup/rollback list               — open the backup manager: auto vs manual groups, pick one to restore
+[5]  reset failure counters
+[6]  mount the dsh-qaq backup plugin     — idempotent, rollback-safe
+[7]  manage plugins                     — install / uninstall / enable / disable
+[8]  view logs                           — full-screen log viewer (error/access/host/qaq)
+[9]  sideload watch                      — run a continuous sideload guard on an external DSH (toggle)
+[10] toggle en / zh
+[11] quit
 ```
 
-While a supervised `dsh web` is running, the guard lock is held until it exits (a second launch is refused and a stale port check can never misfire); Ctrl+C kills the supervised child so no process is left holding the port.
+Navigation: `↑`/`↓` (or `j`/`k`) move the selection, `Enter`/`Space` run the action, digits `1..N` jump straight to an action, `q`/`Esc`/`Ctrl+C` quit.
 
-The console clears the screen before every menu render — the window always shows one screen (persistent header + last action result + menu) instead of stacking stale output. Detailed views (status / logs) pause with an Enter-to-return prompt.
+- **Log viewer** (`[8]`): `1`–`4` switch between `error.log` / `access.log` / `host.log` / `qaq.log`, `↑`/`↓` scroll, `q`/`Esc`/`Enter` return to the menu.
+- **Plugin manager** (`[7]`): manages the **real DeepSeek Harness** plugins. It auto-discovers the DSH installation (home + source checkout, detected running process via heartbeat), scans the checkout's `packages/` for the installable `@deepseek-ai/dsh-*` bundle packages, lists what's installed/enabled in the active profile, and lets you `↑`/`↓` select then `e` enable, `d` disable, `u` uninstall, `i` install. Disabling keeps the module installed but removes it from the profile's boot bundle; uninstalling removes both. It never touches QAQ's own repository.
+- **Operating modes**: the status line shows which integration mode is active — **launcher** (QAQ owns a supervised `dsh web`), **sideload** (an external DSH is up, or a continuous sideload guard is watching it), or **idle**.
+- **Backup manager** (`[4]`): the backup-list sub-screen, split into **auto backups** (written by the guard on confirmed health / the plugin after a real conversation; independent **10**-snapshot quota) and **manual backups** (written by `[3]` / `qaq backup`; independent **3**-snapshot quota). `↑`/`↓` move the selection, `Enter` restores the chosen backup, `q`/`Esc` returns.
+- **Sideload guard** (`[9]`): a **toggle**. First press resolves the external DSH (the `--port` you gave `qaq tui`, else the dsh-qaq plugin heartbeat), pins that port, then keeps probing the real DOM every ~15s — counting host/UI failures and rolling back at threshold (auto-confirm, CLI-owned), exactly like `qaq watch`. Press `[9]` again (or quit) to stop. The status line shows the watched URL and the last probe outcome.
+
+The panel auto-refreshes while a supervised `dsh web` runs; the guard lock is held until it exits (a second launch is refused and a stale port check never misfires). `q`/`Esc`/`Ctrl+C` quit the dashboard; a supervised child is killed so no process is left holding the port.
 
 ## Operations guide
 
 ### First-time setup (Windows)
 
-1. **Install** — double-click `bin\qaq-install.cmd`. It checks Node.js >= 22, installs dependencies (pnpm, with an npx fallback), and builds `dist/qaq.mjs`.
-2. **Mount the backup plugin (recommended)** — run `bin\qaq-web.cmd`, pick **[6]** (mount the dsh-qaq backup plugin). This adds `dsh-qaq` to the profile's bundle list and links the module into the profile's `node_modules`. From then on, the plugin snapshots the config every time a clean host boot settles (backup-only; it never changes DSH behavior). The profile's own `cordis.patch.yml` is intentionally left untouched — DSH auto-loads the plugin's patch from its bundle declaration.
-3. **Launch** — pick **[1]** (start the guard). The console re-runs the pre-launch self-check (dsh command, browser, port), then supervises `dsh web`. Once the UI has been healthy for the confirmation window, the config is recorded as last-good and the guard keeps monitoring in the background (return to the menu anytime; the guard keeps running).
-4. **Verify** — pick **[2]** (view status) or run `qaq status`: `hostFailures` / `uiFailures` should be 0 and `lastSuccess` / `lastGoodSnapshot` present.
+1. **Install** — run `qaq setup`. It checks Node.js >= 22, installs dependencies (pnpm, with an npx fallback), and builds `dist/qaq.mjs` + the plugin lib.
+2. **Mount the backup plugin (recommended)** — run `qaq tui`, press `i` (mount the dsh-qaq backup plugin). This adds `dsh-qaq` to the profile's bundle list and links the module into the profile's `node_modules`. From then on, the plugin snapshots the config once a **real user conversation** has happened — the strongest proof the boot is actually usable. A host that settles but renders a web red screen never lets the user talk, so it is never recorded as last-good (backup-only; it never changes DSH behavior). The profile's own `cordis.patch.yml` is intentionally left untouched — DSH auto-loads the plugin's patch from its bundle declaration.
+3. **Launch** — press `1` (start the guard). The dashboard re-runs the pre-launch self-check (dsh command, browser, port), then supervises `dsh web`. Once the UI has been healthy for the confirmation window, the config is recorded as last-good and the guard keeps monitoring in the background.
+4. **Verify** — `qaq status`: `hostFailures` / `uiFailures` should be 0 and `lastSuccess` / `lastGoodSnapshot` present.
 
 ### Everyday use
 
-- Start DSH the same way every time: `bin\qaq-web.cmd` → **[1]**. Prefer not to start `dsh web` directly anymore — the guard owns the supervised process and is the only one that can detect a red screen.
+- Start DSH the same way every time: `qaq tui` → press `1`. Prefer not to start `dsh web` directly anymore — the guard owns the supervised process and is the only one that can detect a red screen.
 - If the UI red-screens (or the host crashes) **3 times in a row**, QAQ offers a rollback to the last-good config with a diff preview. Accept it — the broken config is preserved under `~/.dsh/.qaq/rolled-back/` for later inspection, and the guard restarts once automatically.
 - After a successful rollback + restart, the counters are zeroed and the anti-loop fence is cleared; the restored profile is the one you had before it broke.
 
@@ -103,10 +120,10 @@ The console clears the screen before every menu render — the window always sho
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Pre-launch self-check failed` — dsh not found | Put `dsh` on `PATH`, set `QAQ_DSH_CMD`, or pass `--cwd <dir>` pointing at the DSH checkout                                                                                                                                      |
 | `Port already in use` — port busy              | Stop the other process, or pick another port: `--port N`                                                                                                                                                                        |
-| UI red-screens again after a rollback          | Inspect the logs and the preserved bad config: `qaq console` → **[7]**, or read `~/.dsh/.qaq/log/` (`error.log`, `access.log`, `host.log`)                                                                                      |
+| UI red-screens again after a rollback          | Inspect the logs and the preserved bad config: `qaq tui` (logs are shown in the dashboard) or read, or read `~/.dsh/.qaq/log/` (`error.log`, `access.log`, `host.log`)                                                                                      |
 | Guard says `anti-loop fence is active`         | A rollback already happened within the last 5 minutes. Fix the config manually (see `rolled-back/`), then `qaq reset --profile web` to clear the counters                                                                       |
-| Want to undo a rollback                        | `qaq restore --to <snapDir> --profile web` with any directory under `~/.dsh/.qaq/history/` (or `rolled-back/`)                                                                                                                  |
-| dsh-qaq not snapshotting                       | The plugin only writes on a **clean host settle**; it does not write on a failed boot. Confirm it is listed in the profile bundles (`qaq console` → **[2]** shows the last snapshot) and that `install-plugin` reported success |
+| Want to undo a rollback                        | `qaq restore --to <snapDir> --profile web` with any directory under `~/.dsh/.qaq/history/auto/` (or `history/manual/`, `rolled-back/`)                                                                                     |
+| dsh-qaq not snapshotting                       | The plugin only writes last-good after a **real user conversation** — a host that settles but red-screens, or a boot nobody talked to, is never snapshotted. Confirm `dsh-qaq` is in the profile bundles (the dashboard shows the last snapshot) and that `install-plugin` reported success |
 
 ### Data locations
 
@@ -133,7 +150,8 @@ The console clears the screen before every menu render — the window always sho
 
 - `state.json` — `hostFailures`, `uiFailures`, `lastSuccess`, `lastFailure`, `lastGoodSnapshot`, `rolledBackAt`
 - `latest-good/` — the last confirmed-good profile config (`package.json` + `cordis.patch.yml` + `manifest.json`)
-- `history/<ts>/` — up to 5 timestamped historical snapshots
+- `history/auto/<ts>/` — auto backup set (guard confirm / plugin real conversation; independent 10-snapshot quota)
+- `history/manual/<ts>/` — manual backup set (`qaq backup` / TUI `[3]`; independent 3-snapshot quota)
 - `rolled-back/<ts>/` — the broken config saved before a rollback (for manual recovery)
 - `log/` — structured multi-file logs (see below)
 
@@ -170,7 +188,7 @@ Every record is one JSON line (`{ ts, level, cat, phase?, msg, ...meta }`) so th
 ## Testing
 
 ```bash
-pnpm test      # vitest unit tests (store / rollback / detector-ui / guard / spawn-dsh / env / install-plugin / log)
+pnpm test      # vitest unit tests (store / paths / cli / dsh-context / rollback / detector-ui / guard / spawn-dsh / env / install-plugin / tui / watch / webhook / cdp / log / i18n / …)
 pnpm smoke     # one-shot regression: unit tests + seed/broken/detect in an isolated home
 ```
 
@@ -194,9 +212,14 @@ Integration fixture: `qaq-test-plugins/dsh-broken-theme` (injects a service that
 | `src/env.ts`                  | auto-discovery + pre-launch self-check (dsh / browser / port)                                                    |
 | `src/console.ts`              | interactive menu GUI (lazy launcher, CMD window)                                                                 |
 | `src/install-plugin.ts`       | auto-mount the dsh-qaq backup plugin (rollback-safe)                                                             |
+| `src/plugin-manager.ts`       | filesystem-scoped plugin lifecycle for the REAL DeepSeek Harness: install / uninstall / enable / disable of DSH bundle packages in a DSH profile |
+| `src/dsh-context.ts`          | resolves the real DSH installation (home + checkout + running-process status via the plugin heartbeat) that the plugin manager and TUI operate on |
 | `src/paths.ts` · `src/log.ts` | path helpers; structured multi-file rotating logger                                                              |
-| `packages/dsh-qaq/`           | DSH backup plugin (snapshots after host boot settles; backup-only)                                               |
-| `bin/`                        | `qaq` / `qaq-web.cmd` / `qaq-install.cmd` launchers (+ `qaq-web.zh.cmd` / `qaq-install.zh.cmd` Chinese variants) |
+| `src/shared-io.ts`           | plugin↔CLI channel: heartbeat / health state / `events.jsonl`                                                     |
+| `src/watch.ts`               | `qaq watch`: attach a guard to a DSH launched by anyone (discover via plugin heartbeat) — powers the TUI sideload mode |
+| `src/webhook.ts`             | dependency-free POSTs for boot-failure / rollback notifications                                                   |
+| `packages/dsh-qaq/`           | DSH backup plugin (snapshots after settle + heartbeat; backup-only; `lib/` generated by `pnpm build`)            |
+| `bin/`                        | `qaq.cmd` + `qaq.mjs` — the single universal CLI entry (`qaq setup` / `qaq tui` / `qaq dsh web` …) |
 | `tools/` · `test/`            | integration/smoke scripts; vitest specs                                                                          |
 
 ## Documentation

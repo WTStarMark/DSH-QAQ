@@ -8,7 +8,12 @@
     "esModuleInterop": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "types": []
+    // Type (compile-time only; zero runtime impact): let resolveDshHome / fs /
+    // process be checked against @types/node. Runtime stays dependency-free —
+    // these types are erased by esbuild's bundle:false transpile.
+    "types": [
+      "node"
+    ]
   },
   "include": [
     "src/**/*.ts"

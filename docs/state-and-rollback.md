@@ -12,11 +12,15 @@ Related: [Architecture Overview](architecture.md) · [Guard Lifecycle](guard-lif
 $DSH_HOME/.qaq/                  # qaqDir(home)
 ├── state.json                   # guard state (atomic write)
 ├── .guard.lock                  # PID-aware guard lock
-├── latest-good/                 # last confirmed-healthy config copy
+├── latest-good/                 # last confirmed-healthy config copy (auto set)
 │   ├── package.json
 │   ├── cordis.patch.yml
-│   └── manifest.json            # { profile, ts }
-├── history/<ts>/                # timestamped history snapshots (keeps at most 5, each with a manifest)
+│   └── manifest.json            # { profile, kind, ts }
+├── history/                     # two independently-quotaed backup sets
+│   ├── auto/<ts>/               # auto backups: guard-confirmed health / plugin real conversation (keeps 10)
+│   │   └── manifest.json        #   { profile, kind: 'auto', ts }
+│   └── manual/<ts>/             # manual backups: qaq backup / TUI manual backup (keeps 3)
+│       └── manifest.json        #   { profile, kind: 'manual', ts }
 ├── rolled-back/<ts>/            # broken config preserved before a rollback (with a manifest note)
 └── log/                         # see logging.md
 ```
@@ -36,7 +40,7 @@ $DSH_HOME/.qaq/                  # qaqDir(home)
       "uiFailures": 0,             // consecutive ui failures (same kind +1, other kind reset)
       "lastSuccess": "ISO-8601",
       "lastFailure": { "kind": "host|ui", "ts": "...", "error": "..." },
-      "lastGoodSnapshot": "history/<ts>",   // this profile's last-good snapshot reference
+      "lastGoodSnapshot": "history/auto/<ts>",   // this profile's last-good snapshot reference (the latest auto backup)
       "rolledBackAt": "ISO-8601"   // anti-loop fence marker; cleared on a successful boot
     }
   },
@@ -64,11 +68,13 @@ $DSH_HOME/.qaq/                  # qaqDir(home)
 
 | Function | Behavior |
 |----------|----------|
-| `writeSnapshot` | copies `package.json` (+ `cordis.patch.yml`) into a snapshot dir, writes `manifest.json` |
-| `listSnapshots` | lists subdirectories **that contain `manifest.json`** (valid snapshots), sorted by ISO timestamp name (lexicographic == chronological, deterministic across restarts) |
-| `pruneSnapshots` | keeps the newest N, removes the rest |
+| `writeSnapshot` | copies `package.json` (+ `cordis.patch.yml`) into a snapshot dir, writes `manifest.json` (includes `kind`) |
+| `listBackups` | lists the valid snapshots of ONE kind under `history/auto` / `history/manual`, sorted by ISO timestamp name (lexicographic == chronological, deterministic across restarts) |
+| `pruneSnapshots` | keeps the newest N of a subdir, removes the rest |
 | `restoreSnapshot` | copies the snapshot's `package.json` / `cordis.patch.yml` back into the profile dir |
 | `isUsableSnapshot` | has a `package.json` → usable |
+
+> Auto and manual backups have **independent quotas**: `history/auto` keeps 10, `history/manual` keeps 3; they never prune each other.
 
 > Note: **restore only overwrites files; it does not delete files the broken config added** (a deliberate, acceptable trade-off).
 
@@ -84,7 +90,7 @@ threshold: same-kind count < threshold (default 3) → do not trigger
    is passed an effective threshold of 1, so it rolls back on the first hit)
 anti-loop fence: rolledBackAt within the last 5 minutes → do not trigger (guide manual fix)
 last-good resolution:
-  prefer state.lastGoodSnapshot (history/<ts>)
+  prefer state.lastGoodSnapshot (history/auto/<ts>, i.e. the latest auto backup)
   else latest-good/ (only when its manifest.profile matches the current profile, to prevent cross-profile misuse)
   neither → do not trigger (advise booting successfully once first)
 back up the broken config: copy the current profile config to rolled-back/<ts>/ (+ a manifest note)
@@ -101,9 +107,13 @@ apply: restoreSnapshot → write rolledBackAt → access.log → return restored
 - **A successful boot clears the fence** (`recordSuccess` deletes `rolledBackAt`) — a real success stands the guard down.
 - Edge: a malformed `rolledBackAt` makes `Date.parse` return NaN, and the fence is treated as inactive (a corrupt datum must not silently disable the fence; the operator repairs state.json).
 
-### 5.3 `recordSuccess`
+### 5.3 `recordSuccess` (automatic backup)
 
-Zero both counters → update `lastSuccess` → clear the fence → write `latest-good/` + `history/<ts>/` (each with a manifest) → update `lastGoodSnapshot` → keep 5 history copies → access.log.
+Zero both counters → update `lastSuccess` → clear the fence → write `latest-good/` + `history/auto/<ts>/` (each with a manifest, `kind:'auto'`) → update `lastGoodSnapshot` → keep **10** auto copies → access.log.
+
+### 5.4 `manualBackup` (manual backup)
+
+Snapshots the current profile into the **manual set** `history/manual/<ts>/` (`kind:'manual'`, keep **3**). It does **not** touch counters, `lastSuccess`, `lastGoodSnapshot`, or the fence — a manual backup is independent of the auto set and never mutates guard state.
 
 ---
 
@@ -111,7 +121,7 @@ Zero both counters → update `lastSuccess` → clear the fence → write `lates
 
 | Command | Behavior |
 |---------|----------|
-| `qaq backup` | snapshots the current profile config as last-good (reuses `recordSuccess`) |
+| `qaq backup` | snapshots the current profile config into the **manual set** `history/manual/` (independent 3-snapshot quota) |
 | `qaq restore --to <snapDir>` | restores the profile from any snapshot dir (`manualRestore`) |
 | `qaq reset` | zeroes the counters, removes `lastFailure` (access.log) |
 | `qaq status` | prints the state summary as JSON |

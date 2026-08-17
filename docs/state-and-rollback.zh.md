@@ -12,11 +12,15 @@
 $DSH_HOME/.qaq/                  # qaqDir(home)
 ├── state.json                   # 守卫状态（原子写入）
 ├── .guard.lock                  # PID 感知守卫锁
-├── latest-good/                 # 最近一次确认健康的配置副本
+├── latest-good/                 # 最近一次确认健康的配置副本（属于 auto 集）
 │   ├── package.json
 │   ├── cordis.patch.yml
-│   └── manifest.json            # { profile, ts }
-├── history/<ts>/                # 时间戳历史快照（最多保留 5 份，含 manifest）
+│   └── manifest.json            # { profile, kind, ts }
+├── history/                     # 独立配额的两个备份集
+│   ├── auto/<ts>/               # 自动备份：守卫确认健康 / 插件真实对话后（保留 10 份）
+│   │   └── manifest.json        #   { profile, kind: 'auto', ts }
+│   └── manual/<ts>/             # 手动备份：qaq backup / TUI 手动备份（保留 3 份）
+│       └── manifest.json        #   { profile, kind: 'manual', ts }
 ├── rolled-back/<ts>/            # 回滚前保存的坏配置（含 manifest，note 标注）
 └── log/                         # 见 logging.md
 ```
@@ -36,7 +40,7 @@ $DSH_HOME/.qaq/                  # qaqDir(home)
       "uiFailures": 0,             // 连续 ui 失败数（同类累加，异类清零）
       "lastSuccess": "ISO-8601",
       "lastFailure": { "kind": "host|ui", "ts": "...", "error": "..." },
-      "lastGoodSnapshot": "history/<ts>",   // 本 profile 的 last-good 快照引用
+      "lastGoodSnapshot": "history/auto/<ts>",   // 本 profile 的 last-good 快照引用（指向最新一次自动备份）
       "rolledBackAt": "ISO-8601"   // 防循环围栏标记；成功启动后清除
     }
   },
@@ -64,11 +68,13 @@ $DSH_HOME/.qaq/                  # qaqDir(home)
 
 | 函数 | 行为 |
 |------|------|
-| `writeSnapshot` | 复制 `package.json`（+ `cordis.patch.yml`）进快照目录，写 `manifest.json` |
-| `listSnapshots` | 列出子目录中**含 manifest.json** 的合法快照，按 ISO 时间戳名排序（字典序=时间序，跨重启确定） |
-| `pruneSnapshots` | 保留最新 N 份，删除其余 |
+| `writeSnapshot` | 复制 `package.json`（+ `cordis.patch.yml`）进快照目录，写 `manifest.json`（含 `kind`） |
+| `listBackups` | 按 kind 列出 `history/auto` 或 `history/manual` 的合法快照（含 manifest，ISO 排序） |
+| `pruneSnapshots` | 保留某子目录最新 N 份，删除其余 |
 | `restoreSnapshot` | 把快照里的 `package.json` / `cordis.patch.yml` 复制回 profile 目录 |
 | `isUsableSnapshot` | 有 `package.json` 即视为可用 |
+
+> 自动与手动备份**各自独立**配额：`history/auto` 保留 10 份、`history/manual` 保留 3 份，互不干扰。
 
 > 注意：**restore 只覆盖文件，不删除 profile 里坏配置新增的文件**（设计取舍，可接受）。
 
@@ -82,7 +88,7 @@ $DSH_HOME/.qaq/                  # qaqDir(home)
 threshold 判定：同类计数 < 阈值（默认 3）→ 不触发
 防循环围栏：rolledBackAt 距今 < 5 分钟 → 不触发（提示手动修复）
 last-good 解析：
-  优先 state.lastGoodSnapshot（history/<ts>）
+  优先 state.lastGoodSnapshot（history/auto/<ts>，即最新一次自动备份）
   其次 latest-good/（仅当 manifest.profile 与当前 profile 一致，防跨 profile 误用）
   都没有 → 不触发（提示先成功启动一次）
 坏配置备份：把当前 profile 配置复制到 rolled-back/<ts>/（+ manifest 标注 note）
@@ -99,9 +105,13 @@ last-good 解析：
 - **成功启动会清除围栏**（`recordSuccess` 删除 `rolledBackAt`）——真成功 = 解除戒备。
 - 边界：`rolledBackAt` 若为非法日期串，`Date.parse` 返回 NaN，围栏判定按"未激活"处理（数据异常不静默禁用，由运维修 state.json）。
 
-### 5.3 `recordSuccess`
+### 5.3 `recordSuccess`（自动备份）
 
-清零两个计数 → 更新 `lastSuccess` → 清除围栏 → 写 `latest-good/` + `history/<ts>/`（各带 manifest）→ 更新 `lastGoodSnapshot` → 保留 5 份历史 → 记 access.log。
+清零两个计数 → 更新 `lastSuccess` → 清除围栏 → 写 `latest-good/` + `history/auto/<ts>/`（各带 manifest，`kind:'auto'`）→ 更新 `lastGoodSnapshot` → 保留 10 份自动历史 → 记 access.log。
+
+### 5.4 `manualBackup`（手动备份）
+
+把当前 profile 配置写进**手动集** `history/manual/<ts>/`（`kind:'manual'`，保留 3 份）。**不改计数、lastSuccess、lastGoodSnapshot、围栏**——手动备份独立于自动备份，绝不触发守卫状态变更。
 
 ---
 
@@ -109,7 +119,7 @@ last-good 解析：
 
 | 命令 | 行为 |
 |------|------|
-| `qaq backup` | 把当前 profile 配置快照为 last-good（复用 `recordSuccess`） |
+| `qaq backup` | 把当前 profile 配置快照进**手动集** `history/manual/`（独立 3 份配额） |
 | `qaq restore --to <snapDir>` | 从任意快照目录还原 profile（`manualRestore`） |
 | `qaq reset` | 清零计数、删除 lastFailure（写 access.log） |
 | `qaq status` | 打印 state 摘要 JSON |

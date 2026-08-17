@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyDom, parseFailedEntries, extractFailureDetail, FAILED_MARKER, pollUi } from '../src/detector-ui.ts'
+import { classifyDom, parseFailedEntries, extractFailureDetail, isDefinitiveUi, FAILED_MARKER, pollUi } from '../src/detector-ui.ts'
 import type { DomSnapshot } from '../src/detector-ui.ts'
 import type { CdpSession } from '../src/cdp.ts'
 
@@ -13,6 +13,24 @@ web boot: 1 entry did not activate dsh-broken-theme: pending (waiting for servic
     expect(v.ok).toBe(false)
     expect(v.failureDetail).toContain('dsh-broken-theme')
     expect(v.failedEntries).toContain('dsh-broken-theme')
+  })
+
+  it('markers the "waiting for service" red screen as a DETERMINISTIC failure', () => {
+    // The canonical case: an entry never activates because it waits forever on
+    // a service nobody provides -> reproduces every boot -> definitive.
+    const body = 'Failed to load plugins\nweb boot: 1 entry did not activate dsh-broken-theme: pending (waiting for service: neverProvidedService)'
+    const v = classifyDom({ bodyText: body, hasComposer: false, isBootPage: false })
+    expect(v.kind).toBe('failed')
+    expect(v.definitive).toBe(true)
+  })
+
+  it('isDefinitiveUi matches only the deterministic boot markers', () => {
+    expect(isDefinitiveUi('web boot: 1 entry did not activate dsh-x: pending (waiting for service: s)')).toBe(true)
+    expect(isDefinitiveUi('web boot: 2 entries did not activate\nfoo: import failed')).toBe(true)
+    // A generic red screen without the deterministic markers is NOT definitive.
+    expect(isDefinitiveUi('Failed to load plugins')).toBe(false)
+    expect(isDefinitiveUi(undefined)).toBe(false)
+    expect(isDefinitiveUi('web boot: something else broke')).toBe(false)
   })
 
   it('calls a healthy UI with a composer healthy', () => {

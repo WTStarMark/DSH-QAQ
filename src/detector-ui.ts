@@ -24,6 +24,10 @@ export interface UiVerdict {
   bodyText: string
   failureDetail?: string
   failedEntries?: string[]
+  /** True when the red screen is a DETERMINISTIC config error ("1 entry did
+   *  not activate … waiting for service"), so the guard may roll back on the
+   *  first hit instead of waiting out the general same-kind threshold. */
+  definitive?: boolean
 }
 
 const DOM_PROBE =`
@@ -44,7 +48,10 @@ export function classifyDom(snap: DomSnapshot): UiVerdict {
   const hasFailed = snap.bodyText.includes(FAILED_MARKER)
   if (hasFailed) {
     const detail = extractFailureDetail(snap.bodyText)
-    return { ok: false, kind: 'failed', bodyText: snap.bodyText, failureDetail: detail, failedEntries: parseFailedEntries(detail) }
+    return {
+      ok: false, kind: 'failed', bodyText: snap.bodyText, failureDetail: detail,
+      failedEntries: parseFailedEntries(detail), definitive: isDefinitiveUi(detail),
+    }
   }
   if (snap.hasComposer) {
     return { ok: true, kind: 'ok', bodyText: snap.bodyText }
@@ -77,6 +84,26 @@ export function parseFailedEntries(detail: string | undefined): string[] {
   }
   return Array.from(new Set(names))
 }
+
+/**
+ * A DETERMINISTIC UI boot failure — e.g. a bundle entry whose client fiber is
+ * waiting forever on a service nobody provides: `web boot: 1 entry did not
+ * activate dsh-x: pending (waiting for service: y)`. These never resolve on
+ * retry (they reproduce identically every boot), so the guard treats them like
+ * a host fail-loud marker: count once, roll back on the first hit — no need to
+ * wait out the general same-kind threshold. The text is pinned by the web boot
+ * error renderer and is stable across builds.
+ */
+export function isDefinitiveUi(detail: string | undefined): boolean {
+  if (!detail) return false
+  // The canonical deterministic scenario: an entry is blocked on a service the
+  // loader tree never provides, so its fiber stays pending forever.
+  if (/did not activate/i.test(detail) && /waiting for service/i.test(detail)) return true
+  // A loader sweeper explicitly reporting a permanently-failed entry.
+  if (/import failed/i.test(detail) && /did not activate/i.test(detail)) return true
+  return false
+}
+
 export async function probeOnce(session: CdpSession): Promise<UiVerdict> {
   const v = await session.evaluate(DOM_PROBE)
   const snap = (v ?? { bodyText: '', hasComposer: false, isBootPage: false }) as DomSnapshot

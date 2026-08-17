@@ -96,8 +96,12 @@ loader entry id` 启动崩溃（真实集成抓到的缺陷）。对旧版残留
 ### 3.3 插件行为
 
 `dsh-qaq` 在 DSH host 内部运行：`ctx.get('loader')?.await?.()` 等 loader 树稳定后，
-把 profile 配置快照到 `~/.dsh/.qaq/latest-good` + `history/<ts>/`（均带 manifest.json）。
-**失败启动不写快照**（`.catch(() => {})`）。
+只做**存在性上报**（心跳 / 插件清单 / 状态），**不再在 settle 时写 last-good 快照**。
+真正的 last-good 备份只发生在**一次真实用户对话**后——`ctx.on('session/event')` 收到
+`user/message` 且 `source.kind === 'user'`（直接人类输入；插件注入 `kind === 'plugin'`、
+模型/工具消息都不算）。因为只有人类真正发过消息，才证明这套配置**可用**：宿主 settle 但
+Web UI 红屏时用户根本无法对话，因此坏配置**绝不会**被写成 last-good。失败启动（settle
+reject）同样不写快照（`.catch(() => {})`）。
 
 ---
 

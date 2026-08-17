@@ -17,6 +17,11 @@
   },
   "include": [
     "src/**/*.ts",
-    "test/**/*.ts"
+    "test/**/*.ts",
+    // The dsh-qaq plugin source + its ambient @deepseek-ai/cordis declaration.
+    // test/plugin.spec.ts imports the plugin, and this keeps resolveDshHome's
+    // node:*/process types and the Context import checked in the same program
+    // (the plugin also has its own tsconfig, see packages/dsh-qaq).
+    "packages/dsh-qaq/src/**/*.ts"
   ]
 }

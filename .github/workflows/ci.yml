@@ -33,6 +33,12 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # The dsh-qaq plugin's lib/ is generated (not committed). Rebuild it into a
+      # throwaway dir and assert it matches the installed copy — catches partial /
+      # stale plugin builds and any non-determinism in the emitter.
+      - name: Plugin lib sync check
+        run: pnpm check:plugin-lib
+
       - name: Unit tests
         run: pnpm test
 

@@ -143,6 +143,38 @@ describe('guard.bootAttempt leak regression', () => {
     expect(state.profiles['web'].rolledBackAt).toBeDefined()
   })
 
+  it('rolls back on the FIRST deterministic UI red screen instead of waiting out the threshold', async () => {
+    // Seed a last-good snapshot, then break the live profile config.
+    recordSuccess(home, 'web', new Logger(home), join(home, 'profiles', 'web', 'package.json'), join(home, 'profiles', 'web', 'cordis.patch.yml'))
+    writeFileSync(join(home, 'profiles', 'web', 'package.json'), JSON.stringify({ name: 'web', dependencies: { 'dsh-broken-theme': 'link:D:/x' } }))
+
+    // A deterministic UI red screen: host healthy (child alive, no fail-loud
+    // marker) but a client fiber waits forever on a never-provided service. The
+    // detector marks it definitive, so the guard must treat it like a host crash.
+    spawnDshMock.mockReturnValue(mkSupervisor())
+    detectUiMock.mockResolvedValue({
+      ok: false, kind: 'failed', definitive: true,
+      bodyText: 'Failed to load plugins',
+      failureDetail: 'web boot: 1 entry did not activate dsh-broken-theme: pending (waiting for service: neverProvidedService)',
+    })
+
+    // A general threshold of 5 is configured, but a definitive UI failure overrides it to 1.
+    const v = await superviseBoot({ home, command: ['fake'], cwd: '.', profile: 'web', retries: 1, uiTimeoutMs: 100, confirmGoodMs: 0, autoConfirm: true, threshold: 5 })
+
+    expect(v.ok).toBe(false)
+    if (!v.ok) {
+      expect(v.failureKind).toBe('ui')
+      expect(v.rolledBack).toBe(true)
+    }
+    // The live profile was restored to last-good (dsh-broken-theme removed).
+    const restored = JSON.parse(readFileSync(join(home, 'profiles', 'web', 'package.json'), 'utf8'))
+    expect(restored.dependencies).toBeUndefined()
+    const state = readState(home)
+    expect(state.profiles['web'].uiFailures).toBe(1)
+    // Anti-loop fence armed so a still-broken restart cannot loop.
+    expect(state.profiles['web'].rolledBackAt).toBeDefined()
+  })
+
   it('does not mark retriesExhausted when a genuine (non-transient) failure stops the loop early', async () => {
     spawnDshMock.mockReturnValue(mkSupervisor())
     detectUiMock.mockResolvedValue({ ok: false, kind: 'failed', bodyText: 'Failed to load plugins', failureDetail: 'web boot: 1 entry did not activate dsh-x: pending (waiting for service: y)' })

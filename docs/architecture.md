@@ -38,11 +38,18 @@ QAQ's detection line (L3) is the only reliable **non-invasive** probe: drive a h
 | State store | `src/store.ts` | atomic state.json I/O, snapshot management, guard lock | `readState()`, `writeState()`, `acquireLock()` |
 | Rollback engine | `src/rollback.ts` | threshold, broken-config backup, anti-loop, success bookkeeping | `maybeRollback()`, `recordSuccess()` |
 | Environment discovery | `src/env.ts` | dsh/browser/port auto-discovery + pre-launch self-check | `preflight()`, `resolveCommand()` |
+| Command surface | `src/cli.ts` | subcommand parsing + command handlers (status/backup/restore/reset/watch/dsh…) | `parseCli()` |
+| Real DSH context | `src/dsh-context.ts` | resolve the real DSH install (home/profile/checkout) + process/plugin connection state | `resolveDshContext()`, `findDshPackages()` |
 | Interactive console | `src/console.ts` | lazy launcher CMD menu GUI | `openConsole()` |
 | Plugin mounting | `src/install-plugin.ts` | install the dsh-qaq plugin into a DSH profile (bundle mechanism) | `installPlugin()` |
+| Full-screen dashboard | `src/tui.ts` | raw-mode TTY dashboard: live state, hotkeys, lang toggle | `runTui()` |
+| Setup | `src/setup.ts` | one-command install deps + build | `runSetup()` |
 | Path helpers | `src/paths.ts` | `$DSH_HOME` / `.qaq` / profile path derivation | `resolveDshHome()`, `qaqDir()`, `profileDir()` |
 | Logging | `src/log.ts` | structured multi-file rotating logger | `Logger` |
-| DSH backup plugin | `packages/dsh-qaq/` | runs inside DSH host, snapshots config after the host settles | `apply()`, `name` |
+| Plugin↔CLI shared channel | `src/shared-io.ts` | JSON heartbeat / health state / `events.jsonl` between the plugin and the guard | `readPluginHeartbeat()`, `pushEvent()` |
+| External-guard attach | `src/watch.ts` | `qaq watch`: watch a DSH the CLI did not spawn (discover by heartbeat), count + rollback | `watchOnce()`, `resolveWatchTarget()` |
+| Webhook delivery | `src/webhook.ts` | dependency-free outgoing POSTs for boot-failure / rollback events | `deliverWebhooks()` |
+| DSH backup plugin | `packages/dsh-qaq/` | runs inside DSH host, snapshots config after settle + writes heartbeat/events to the shared channel | `apply()`, `name` |
 
 ---
 
@@ -110,12 +117,13 @@ $DSH_HOME/profiles/web/
   package.json        ── declares dsh.profile.bundles (plugin layer list)
   cordis.patch.yml    ── user patch layer (QAQ never modifies it)
 
-         │ on confirmed health (guard) / host settled (dsh-qaq plugin)
+         │ on confirmed health (guard) / a real user conversation (dsh-qaq plugin)
          ▼
 $DSH_HOME/.qaq/
   state.json          ── counters / lastSuccess / lastGoodSnapshot / rolledBackAt
   latest-good/        ── last confirmed-healthy config copy (package.json + cordis.patch.yml + manifest.json)
-  history/<ts>/       ── up to 5 timestamped historical snapshots
+  history/auto/<ts>/  ── auto backups (guard confirm / plugin real conversation; independent 10 quota)
+  history/manual/<ts>/── manual backups (qaq backup / TUI; independent 3 quota)
   rolled-back/<ts>/   ── broken config preserved before a rollback (manual recovery)
   log/                ── qaq.log / error.log / access.log / host.log
   .guard.lock         ── PID-aware guard lock

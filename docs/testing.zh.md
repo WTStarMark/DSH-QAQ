@@ -9,7 +9,7 @@
 ## 1. 测试命令
 
 ```bash
-pnpm test      # vitest run —— 8 个 spec 文件，42 个用例
+pnpm test      # vitest run —— 11 个 spec 文件，63 个用例
 pnpm smoke     # 一键回归：单测 + 隔离 home 种子/破坏/守卫检测
 pnpm typecheck # tsc --noEmit
 ```
@@ -20,14 +20,18 @@ pnpm typecheck # tsc --noEmit
 
 | 文件 | 覆盖点 | 关键用例 |
 |------|--------|----------|
-| `store.spec.ts` | 状态读写、原子性、快照、锁 | 损坏 state 回退默认；剪枝保留 5 份；manifest 记录真实 profile 名（回归）；锁互斥与释放 |
-| `rollback.spec.ts` | 回滚引擎 | 阈值以下不触发；触发时备份坏配置并还原；围栏阻止二次回滚；无快照不触发；用户拒绝不覆盖；recordSuccess 清零+清围栏+快照 |
-| `guard.spec.ts` | 编排（mock spawn/detect） | UI 永不落定必须 kill 子进程（泄漏回归）；确认窗口内劣化不得记 last-good；**宿主绑定后崩溃 → 归类 host 而非 unknown（分类回归）**；retriesExhausted 语义 |
+| `store.spec.ts` | 状态读写、原子性、快照、备份集、锁 | 损坏 state 回退默认；剪枝保留 5 份；manifest 记录真实 profile 名（回归）；锁互斥与释放；**`readSnapshotKind`（损坏/缺失回退 auto）、auto/manual 独立配额（10/3）、`listBackups` 空集与按集分离** |
+| `paths.spec.ts` | 纯路径工具 | `resolveDshHome` 默认 vs 显式 DSH_HOME（空/去空格）；`qaqDir`；`profileDir`；`profilesNodeModules`（平台无关分隔符） |
+| `cli.spec.ts` | 命令面解析 | `parseCli` 覆盖各子命令/模式、`--yes`/`--profile`、watch `--attach` 回退 `--port`、数字调优旗标（含非法数字护栏）、可重复 `--webhook`、restore `--to`；导入 CLI 不会自动跑 `main()` |
+| `dsh-context.spec.ts` | 真实 DSH 发现 | 隔离 `DSH_HOME`（每 worker）；空闲 profile 解析；外部运行 DSH 通过新鲜插件心跳上报（pid/port、connected）；`profileBasename`；`describeDsh` |
+| `rollback.spec.ts` | 回滚引擎 | 阈值以下不触发；触发时备份坏配置并还原；围栏阻止二次回滚；无快照不触发；用户拒绝不覆盖；recordSuccess 清零+清围栏+快照；**manualBackup 只写手动集、不改计数；auto/manual 独立配额（自动 10 / 手动 3）** |
+| `guard.spec.ts` | 编排（mock spawn/detect） | UI 永不落定必须 kill 子进程（泄漏回归）；确认窗口内劣化不得记 last-good；**宿主绑定后崩溃 → 归类 host 而非 unknown（分类回归）**；retriesExhausted 语义；**确定性 UI 红屏首次即回滚（有效阈值 1）** |
 | `spawn-dsh.spec.ts` | 真实子进程就绪跟踪 | 端口开启前退出 → ready 立即拒绝并给真实退出码；命令不存在 → spawn error 不干等超时 |
-| `detector-ui.spec.ts` | L3 判据 | 红屏文本判 failed 且提取 detail/failedEntries；健康 composer 判 ok；启动页判 loading；**0ms 超时至少探测一次（confirm-ms 0 回归）** |
+| `detector-ui.spec.ts` | L3 判据 | 红屏文本判 failed 且提取 detail/failedEntries；健康 composer 判 ok；启动页判 loading；**0ms 超时至少探测一次（confirm-ms 0 回归）**；**"waiting for service" 红屏判 definitive** |
 | `env.spec.ts` | 环境发现 | findCheckoutCli / QAQ_DSH_CMD / --cwd checkout / **兄弟目录自动发现（qaq-web.cmd 布局）** / isPortFree |
 | `install-plugin.spec.ts` | 插件挂载 | 未初始化 profile 优雅失败；真实挂载幂等 + **user patch 不被触碰**；插件目录解析 |
 | `log.spec.ts` | 日志系统 | JSON 行格式、error 双写、access 通道、`.in()` 类别、按大小轮转 |
+| `tui.spec.ts` | 仪表盘 | 布局不溢出；首帧才全清屏；日志/插件面板；**备份管理面板：自动/手动分群渲染、`◈` 平铺光标跨两群、空集占位** |
 
 测试基建注意：
 - `guard.spec.ts` 用 `vi.hoisted` + `vi.mock` 替换 `spawn-dsh` / `detector-ui`，断言 `killMock` 调用。

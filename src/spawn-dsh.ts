@@ -10,6 +10,7 @@ import net from 'node:net'
 const HOST_FAIL_KEYWORDS = [
   'plugin tree failed to load',
   'failed to load plugin',
+  'failed to parse',
   'cannot get property',
   'unhandled exception',
 ]

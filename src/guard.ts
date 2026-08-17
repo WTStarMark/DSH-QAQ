@@ -103,7 +103,7 @@ async function bootAttempt(opts: GuardOptions, command: string[], port: number):
       return { kind: 'host', error: 'host exited with UI red screen (code=' + code + ')' + marker, killed: true, definitive: supervision.hasHostFailureMarker() }
     }
     supervision.kill()
-    return { kind: 'ui', error: ui.failureDetail ?? 'Failed to load plugins', killed: true }
+    return { kind: 'ui', error: ui.failureDetail ?? 'Failed to load plugins', killed: true, definitive: ui.definitive ?? false }
   }
   if (ui.kind !== 'ok') {
     // The host may have bound the port and THEN crashed (a boot-stage error
@@ -193,10 +193,12 @@ export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
   log.error((kind === 'ui' ? 'UI red screen: ' : 'boot failed: ') + lastOk.error)
   if (kind === 'host' || kind === 'ui') {
     incrementFailure(home, profile, kind, lastOk.error, log)
-    // A definitive host crash (process died with a fail-loud boot marker) is a
-    // deterministic config error: roll back on the first hit instead of waiting
-    // out the general same-kind threshold.
-    const effectiveThreshold = kind === 'host' && lastOk.definitive ? 1 : opts.threshold
+    // A definitive failure — a host process that died with a fail-loud boot
+    // marker, OR a UI red screen that is a deterministic config error ("1 entry
+    // did not activate … waiting for service") — is assumed to reproduce on
+    // every boot, so roll back on the first hit instead of waiting out the
+    // general same-kind threshold.
+    const effectiveThreshold = lastOk.definitive ? 1 : opts.threshold
     const rolled = await maybeRollback({ home, profile, kind, autoConfirm: opts.autoConfirm ?? false, log, threshold: effectiveThreshold })
     return {
       ok: false, failureKind: kind, error: lastOk.error,
@@ -253,7 +255,7 @@ export function resolveBootTarget(opts: { command: string[]; port?: number }): {
   return { command: [...opts.command, '--port', String(port)], port }
 }
 
-function incrementFailure(home: string, profile: string, kind: 'host' | 'ui', error: string, log: Logger): void {
+export function incrementFailure(home: string, profile: string, kind: 'host' | 'ui', error: string, log: Logger): void {
   const state = readState(home)
   const prof = profileState(state, profile)
   if (kind === 'host') { prof.hostFailures += 1; prof.uiFailures = 0 } else { prof.uiFailures += 1; prof.hostFailures = 0 }
