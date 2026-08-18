@@ -71,7 +71,7 @@ qaq dsh web --port 3080 --yes
 
 ## 仪表盘（`qaq tui` / `qaq console`）
 
-在终端（`qaq tui`）下 QAQ 显示**全屏、自动刷新**的仪表盘——TUI 是**全能入口**：既能启动守卫（启动器模式），也能附着到外部启动的 DSH（侧载模式），还能浏览日志、管理插件。面板显示守卫状态、当前运行模式（启动器 / 侧载 / 空闲）、失败计数、last-good 快照、插件挂载状态、**日志查看器**和**插件管理器**。非 TTY 时退回一次性屏幕菜单（`qaq console`）。界面**双语**——在 TUI 内按 `10` 切换 en/zh（裸 `qaq console` 默认中文；`$QAQ_LANG` 或 `--lang` 可覆盖）。可用操作：
+在终端（`qaq tui`）下 QAQ 显示**全屏、自动刷新**的仪表盘——TUI 是**全能入口**：既能启动守卫（启动器模式），也能附着到外部启动的 DSH（侧载模式），还能浏览日志、管理插件。面板显示守卫状态、当前运行模式（启动器 / 侧载 / 空闲）、失败计数、last-good 快照、插件挂载状态、**当前版本号**、**日志查看器**和**插件管理器**。非 TTY 时退回一次性屏幕菜单（`qaq console`）。界面**双语**——在 TUI 内按 `12` 切换 en/zh（裸 `qaq console` 默认中文；`$QAQ_LANG` 或 `--lang` 可覆盖）。可用操作：
 
 ```
 [1] 一键启动守卫（接管 dsh web）     — 启动器模式：每次自检，回滚 + 重启
@@ -84,11 +84,14 @@ qaq dsh web --port 3080 --yes
 [8] 查看日志                         — 全屏日志查看器（error/access/host/qaq）
 [9] 侧载 watch                       — 对外部启动的 DSH 运行持续侧载守卫（开关切换）
 [10] 热更新                          — client 插件热更监控 + bundle/dist 自动重启开关
-[11] 切换语言 en / zh
-[12] 退出
+[11] 检测更新 (Beta)                 — 从 GitHub 检测新版本；发现更新后再次按本项确认下载
+[12] 切换语言 en / zh
+[13] 退出
 ```
 
 导航：`↑`/`↓`（或 `j`/`k`）移动选择，`Enter`/`Space` 执行，数字 `1..N` 直达动作，`q`/`Esc`/`Ctrl+C` 退出。
+
+- **版本更新（Beta，`[11]`）**：仪表盘头部显示当前版本号（如 `v0.4.4`）；按 `[11]` 从 GitHub（<https://github.com/WTStarMark/QAQ>）检测最新版本——有新版本时状态区显示 `- 有新更新 vX.X.X`，**再次按 `[11]` 确认更新**：下载最新源码包到 `~/.dsh/.qaq/update/` 并提示升级步骤（`qaq setup`）。离线/失败仅提示，不影响任何守卫功能。
 
 - **日志查看器**（`[8]`）：`1`–`4` 切换 `error.log` / `access.log` / `host.log` / `qaq.log`，`↑`/`↓` 滚动，`q`/`Esc`/`Enter` 返回菜单。
 - **插件管理器**（`[7]`）：管理**真实的 DeepSeek Harness** 插件。它自动发现 DSH 安装（home + 源码 checkout，并通过心跳检测正在运行的进程），扫描 checkout 的 `packages/` 找到可安装的 `@deepseek-ai/dsh-*` bundle 包，列出当前 profile 里已安装/已启用的项；`↑`/`↓` 选中插件，然后 `e` 启用、`d` 停用、`u` 卸载、`i` 安装；`q`/`Esc` 返回菜单。**停用** = 保留模块但移出启动 bundle；**卸载** = 两者都移除。它绝不改动 QAQ 自己的仓库。
@@ -244,6 +247,7 @@ CI（`.github/workflows/ci.yml`）在 **ubuntu-latest** 与 **windows-latest** �
 | `src/paths.ts` · `src/log.ts` | 路径助手；结构化多文件轮转日志                                                          |
 | `src/shared-io.ts`            | 插件↔CLI 通道：心跳 / 健康状态 / `events.jsonl`                                         |
 | `src/watch.ts`                | `qaq watch`：为任何方式启动的 DSH 附设守卫（按插件心跳发现）                            |
+| `src/update.ts`               | 版本更新检测（Beta）：本地/远端版本解析比较、GitHub 检测与源码包下载                    |
 | `src/webhook.ts`              | 无依赖的启动失败 / 回滚事件 POST 通知                                                   |
 | `packages/dsh-qaq/`           | DSH 备份插件（真实对话后写自动备份 + 心跳；仅备份；`lib/` 由 `pnpm build` 生成）             |
 | `bin/`                        | `qaq.cmd` + `qaq.mjs` —— 唯一通用 CLI 入口（`qaq setup` / `qaq tui` / `qaq dsh web` …） |

@@ -9,7 +9,7 @@
 ## 1. 测试命令
 
 ```bash
-pnpm test      # vitest run —— 26 个 spec 文件，254 个用例
+pnpm test      # vitest run —— 27 个 spec 文件，270 个用例
 pnpm smoke     # 一键回归：单测 + 隔离 home 种子/破坏/守卫检测
 pnpm lint      # 零依赖风格门禁（行尾空格、制表符、TODO 标记、文件末尾换行）
 pnpm typecheck # tsc --noEmit
@@ -32,7 +32,8 @@ pnpm typecheck # tsc --noEmit
 | `env.spec.ts` | 环境发现 | findCheckoutCli / QAQ_DSH_CMD / --cwd checkout / **兄弟目录自动发现（checkout 与 cwd 并排）** / isPortFree |
 | `install-plugin.spec.ts` | 插件挂载 | 未初始化 profile 优雅失败；真实挂载幂等 + **user patch 不被触碰**；插件目录解析 |
 | `log.spec.ts` | 日志系统 | JSON 行格式、error 双写、access 通道、`.in()` 类别、按大小轮转 |
-| `tui.spec.ts` | 仪表盘 | 布局不溢出；首帧才全清屏；日志/插件面板；**备份管理面板：自动/手动分群渲染、`◈` 平铺光标跨两群、空集占位** |
+| `tui.spec.ts` | 仪表盘 | 布局不溢出；首帧才全清屏；日志/插件面板；**备份管理面板：自动/手动分群渲染、`◈` 平铺光标跨两群、空集占位**；**版本号头部显示 + 「检测更新 (Beta)」菜单位置 + 更新提示行** |
+| `update.spec.ts` | 版本检测（Beta） | 版本三元组解析/比较（0.0.3→0.1.3→…→0.4.4 链条）；本地版本读取；`checkForUpdate` 用桩 fetch（更新/相同/更旧/HTTP 错误/坏载荷/网络错误）；`downloadUpdateSource` 写出 `qaq-<version>.zip` |
 
 测试基建注意：
 - `guard.spec.ts` 用 `vi.hoisted` + `vi.mock` 替换 `spawn-dsh` / `detector-ui`，断言 `killMock` 调用。

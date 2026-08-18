@@ -9,7 +9,7 @@ Related: [Architecture Overview](architecture.md)
 ## 1. Test commands
 
 ```bash
-pnpm test      # vitest run — 26 spec files
+pnpm test      # vitest run — 27 spec files
 pnpm smoke     # one-shot regression: unit tests + seed/broken/detect in an isolated home
 pnpm lint      # dependency-free style gate (trailing whitespace, tabs, TODO markers, final newline)
 pnpm typecheck # tsc --noEmit (root src/+test/) AND packages/dsh-qaq via its own tsconfig
@@ -47,6 +47,7 @@ pnpm build      # bundle dist/qaq.mjs AND regenerate packages/dsh-qaq/lib
 | `watch.spec.ts` | external-guard attach | `--attach` / heartbeat target resolution; webhook URL merge + dedupe (no real Chrome) |
 | `watch-once.spec.ts` | `watchOnce` decision paths | healthy→recordSuccess; red-screen→count+rollback+webhook; **deterministic red-screen→rollback with effective threshold 1**; unreachable→host count; loading→uncounted; no-target safety |
 | `webhook.spec.ts` | webhooks delivery | best-effort no-op without targets; live HTTP POST to all URLs; unsupported protocol never throws; `webhooks.json` single/array/corrupt; `defaultWebhookHome` fallback |
+| `update.spec.ts` | version check (Beta) | version triple parse/compare (0.0.3→0.1.3→…→0.4.4 chain); local version read; `checkForUpdate` with a stubbed fetch (newer/equal/older/HTTP error/bad payload/network error); `downloadUpdateSource` writes `qaq-<version>.zip` |
 | `cdp.spec.ts` | browser discovery | deterministic `findBrowser` through env override (Chrome/Edge fallback, null, empty env) |
 | `cdp-retry.spec.ts` | UI-probe retry loop | port-collision retry with a fresh random port; no-retry on missing browser / explicit port (mocked `launchSession`, no real Chrome) |
 | `width.spec.ts` | terminal width math | CJK/fullwidth=2 cols, ANSI = 0 cols, `padEnd/Start`, ANSI-safe `truncate` |

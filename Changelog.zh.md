@@ -6,6 +6,17 @@ QAQ —— DeepSeek Harness 启动容灾守卫。本文件依据 git 提交历�
 
 ---
 
+## [0.4.4] — 2026-08-18 · 版本更新检测（Beta）与版本对齐
+
+### 新增
+- 版本更新检测（Beta）：TUI 头部显示当前版本号，新增「检测更新 (Beta)」菜单项；GitHub（<https://github.com/WTStarMark/QAQ>）存在更新时，状态区显示「- 有新更新 vX.X.X」。
+- 确认更新流程：发现更新后再次按该菜单项，下载最新 master 源码包到 `~/.dsh/.qaq/update/`，并提示升级步骤（`qaq setup`）。
+
+### 变更
+- 版本对齐：`package.json` 与 `packages/dsh-qaq/package.json` 由 `0.1.0` 统一升至 `0.4.4`。
+
+---
+
 ## [0.4.3] — 2026-08-18 · 文档重构与加固
 
 ### 变更

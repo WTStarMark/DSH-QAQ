@@ -394,3 +394,24 @@ describe('isQaqMounted (auto-mount decision on dashboard open)', () => {
     expect(isQaqMounted(home, 'mounted')).toBe(true)
   })
 })
+
+describe('TUI version / update wiring (Beta)', () => {
+  it('includes the Check-for-updates item (between Hot update and Language)', () => {
+    const hotIdx = indexOfColumn('热更新')
+    const langIdx = indexOfColumn('语言  <')
+    const updateIdx = indexOfColumn('检测更新 (Beta)')
+    expect(updateIdx).toBeGreaterThan(hotIdx)
+    expect(updateIdx).toBeLessThan(langIdx)
+  })
+
+  it('shows the local version in the header and the update notice when available', () => {
+    const frame = stripAnsi(buildFrame({ home, profile: 'web', t: makeT('zh'), lang: 'zh', activeGuard: null, message: 'x', report: null, mode: 'idle', conn: 'disconnected', logs: null, plugins: null, cols: 90, rows: 30, selected: 0, color: false, clearFirst: false, version: '0.4.4', updateLine: '有新更新 v0.5.0' }))
+    expect(frame).toContain('v0.4.4')
+    expect(frame).toContain('- 有新更新 v0.5.0')
+  })
+
+  it('renders no update notice when none is available', () => {
+    const frame = stripAnsi(buildFrame({ home, profile: 'web', t: makeT('zh'), lang: 'zh', activeGuard: null, message: 'x', report: null, mode: 'idle', conn: 'disconnected', logs: null, plugins: null, cols: 90, rows: 30, selected: 0, color: false, clearFirst: false, version: '0.4.4' }))
+    expect(frame).not.toContain('有新更新')
+  })
+})

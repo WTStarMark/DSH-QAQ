@@ -48,6 +48,7 @@ QAQ 的检测线（L3）是唯一可靠的**非侵入**探测：用 headless Chr
 | 日志 | `src/log.ts` | 结构化多文件轮转日志 | `Logger` |
 | 插件↔CLI 共享通道 | `src/shared-io.ts` | 插件与守卫之间的 JSON 心跳 / 健康状态 / `events.jsonl` | `readPluginHeartbeat()`, `pushEvent()` |
 | 外部守卫接管 | `src/watch.ts` | `qaq watch`：监视并非 CLI 启动的 DSH（按心跳发现），计数 + 回滚 | `watchOnce()`, `resolveWatchTarget()` |
+| 版本更新（Beta） | `src/update.ts` | 本地/远端版本解析比较、GitHub 检测、源码包下载 | `checkForUpdate()`, `downloadUpdateSource()`, `compareVersions()` |
 | Webhook 投递 | `src/webhook.ts` | 无依赖的启动失败 / 回滚事件 POST 通知 | `deliverWebhooks()` |
 | DSH 备份插件 | `packages/dsh-qaq/` | 在 DSH host 内部：真实用户对话后写 last-good 快照 + 持续向共享通道写心跳/清单/状态 | `apply()`, `isUserConversation()` |
 
@@ -160,6 +161,6 @@ packages/dsh-qaq/           # DSH 备份插件（独立包，lib/index.js 为构
 bin/                        # CLI 入口：qaq.cmd（纯 ASCII 开发包装）+ qaq.mjs（dist/tsx 引导）
 qaq-test-plugins/           # 集成测试夹具（dsh-broken-theme → 确定性红屏）
 tools/                      # smoke.mjs / rollback-test.ps1 / loop-test.ps1
-test/                       # vitest 单测（26 个 spec 文件，254 个用例）
+test/                       # vitest 单测（27 个 spec 文件，270 个用例）
 docs/                       # 本文档集合
 ```

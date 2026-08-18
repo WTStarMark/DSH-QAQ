@@ -48,6 +48,7 @@ QAQ's detection line (L3) is the only reliable **non-invasive** probe: drive a h
 | Logging | `src/log.ts` | structured multi-file rotating logger | `Logger` |
 | Plugin↔CLI shared channel | `src/shared-io.ts` | JSON heartbeat / health state / `events.jsonl` between the plugin and the guard | `readPluginHeartbeat()`, `pushEvent()` |
 | External-guard attach | `src/watch.ts` | `qaq watch`: watch a DSH the CLI did not spawn (discover by heartbeat), count + rollback | `watchOnce()`, `resolveWatchTarget()` |
+| Version update (Beta) | `src/update.ts` | local/remote version parse+compare, GitHub check, source-archive download | `checkForUpdate()`, `downloadUpdateSource()`, `compareVersions()` |
 | Webhook delivery | `src/webhook.ts` | dependency-free outgoing POSTs for boot-failure / rollback events | `deliverWebhooks()` |
 | DSH backup plugin | `packages/dsh-qaq/` | runs inside DSH host, snapshots config after settle + writes heartbeat/events to the shared channel | `apply()`, `name` |
 
@@ -160,6 +161,6 @@ packages/dsh-qaq/           # DSH backup plugin (standalone package; lib/index.j
 bin/                        # CLI entry: qaq.cmd (ASCII dev wrapper) + qaq.mjs (dist/tsx bootstrap)
 qaq-test-plugins/           # integration fixture (dsh-broken-theme → deterministic red screen)
 tools/                      # smoke.mjs / rollback-test.ps1 / loop-test.ps1
-test/                       # vitest unit tests (26 spec files)
+test/                       # vitest unit tests (27 spec files)
 docs/                       # this documentation set (en = *.md, zh = *.zh.md)
 ```

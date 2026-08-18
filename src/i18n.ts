@@ -111,6 +111,7 @@ export const en: Record<string, string> = {
   'tui.menu.logs': 'Logs',
   'tui.menu.sideload': 'Sideload watch',
   'tui.menu.hot': 'Hot update',
+  'tui.menu.update': 'Check for updates (Beta)',
   'tui.menu.lang': 'Language',
   'tui.menu.quit': 'Quit',
 
@@ -125,6 +126,7 @@ export const en: Record<string, string> = {
   'tui.menudetail.logs': 'error / access / host / qaq log viewer',
   'tui.menudetail.sideload': 'run a continuous sideload guard on an external DSH (toggle)',
   'tui.menudetail.hot': 'watch client-plugin bundles for live reload + auto-restart toggles',
+  'tui.menudetail.update': 'check GitHub for a newer QAQ; confirm to download (Beta)',
   'tui.menudetail.lang': 'toggle en / zh',
   'tui.menudetail.quit': 'close the dashboard',
 
@@ -193,6 +195,16 @@ export const en: Record<string, string> = {
   'tui.hot.verify.applied': '{name} applied live ✔',
   'tui.hot.verify.pending': '{name} written; DSH offline — applies at next boot',
   'tui.hot.verify.failed': '{name} NOT applied: {detail} (old tree still running)',
+
+  // update.ts — version update check (Beta)
+  'tui.update.checking': 'Checking for updates…',
+  'tui.update.latest': 'Already up to date (v{version})',
+  'tui.update.available': 'New version v{latest} found (current v{current}) — press this item again to confirm',
+  'tui.update.hasNew': 'new update v{version}',
+  'tui.update.failed': 'Update check failed: {error}',
+  'tui.update.downloading': 'Downloading v{version} source archive…',
+  'tui.update.downloaded': 'Saved to {path} — run `qaq setup` to finish the upgrade',
+  'tui.update.downloadFailed': 'Download failed: {error}',
 
   // env.ts — pre-launch self-check problems
   'env.DSH_NOT_FOUND.msg': 'Cannot find the dsh command and no DeepSeek Harness source checkout was found.',
@@ -351,6 +363,7 @@ export const zh: Record<string, string> = {
   'tui.menu.logs': '日志',
   'tui.menu.sideload': '侧载 watch',
   'tui.menu.hot': '热更新',
+  'tui.menu.update': '检测更新 (Beta)',
   'tui.menu.lang': '语言',
   'tui.menu.quit': '退出',
 
@@ -365,6 +378,7 @@ export const zh: Record<string, string> = {
   'tui.menudetail.logs': 'error / access / host / qaq 日志查看器',
   'tui.menudetail.sideload': '对外部启动的 DSH 运行持续侧载守卫（开关切换）',
   'tui.menudetail.hot': '监控 client 插件 bundle 热更 + 自动重启开关',
+  'tui.menudetail.update': '从 GitHub 检测新版本；发现更新后再次按本项确认下载（Beta）',
   'tui.menudetail.lang': '切换 en / zh',
   'tui.menudetail.quit': '关闭仪表盘',
 
@@ -433,6 +447,16 @@ export const zh: Record<string, string> = {
   'tui.hot.verify.applied': '{name} 已热生效 ✔',
   'tui.hot.verify.pending': '{name} 已写入；DSH 离线——重启后生效',
   'tui.hot.verify.failed': '{name} 未生效：{detail}（旧树仍在运行）',
+
+  // update.ts — 版本更新检测（Beta）
+  'tui.update.checking': '正在检测更新…',
+  'tui.update.latest': '已是最新版本 v{version}',
+  'tui.update.available': '发现新版本 v{latest}（当前 v{current}）——再次按本项确认更新',
+  'tui.update.hasNew': '有新更新 v{version}',
+  'tui.update.failed': '更新检测失败：{error}',
+  'tui.update.downloading': '正在下载 v{version} 源码包…',
+  'tui.update.downloaded': '已保存到 {path}——运行 `qaq setup` 完成升级',
+  'tui.update.downloadFailed': '下载失败：{error}',
 
   // env.ts — pre-launch self-check problems
   'env.DSH_NOT_FOUND.msg': '找不到 dsh 命令，也没有发现 DeepSeek Harness 源码目录。',

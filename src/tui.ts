@@ -39,6 +39,7 @@ import { watchOnce, resolveWatchTarget, type WatchVerdict } from './watch.ts'
 import { isHeartbeatFresh, pushEvent } from './shared-io.ts'
 import { verifyPatchInsertApplied, watchClientBundles, watchRestartTriggers, resolveClientBundlePaths } from './hot-update.ts'
 import { makeT, type Lang, type T } from './i18n.ts'
+import { checkForUpdate, downloadUpdateSource, resolveLocalVersion } from './update.ts'
 import { displayWidth, padEnd, truncate } from './width.ts'
 import { bannerGradient, hasColor, type RGB } from './color.ts'
 import { KeyParser } from './keys.ts'
@@ -154,6 +155,10 @@ export interface FrameInput {
   /** Optional live hot-update status line (rendered under the plugin
    *  connectivity row when non-empty). */
   hotLine?: string | null
+  /** Local QAQ version (shown in the header when present). */
+  version?: string
+  /** When an update is available, its status line (e.g. "- 有新更新 v0.5.0"). */
+  updateLine?: string | null
   cols: number
   rows: number
   /** Currently selected menu index (0-based). */
@@ -255,6 +260,7 @@ function menuLabels(t: T, lang: Lang): string[] {
     t('tui.menu.logs'),
     t('tui.menu.sideload'),
     t('tui.menu.hot'),
+    t('tui.menu.update'),
     t('tui.menu.lang') + '  <' + langNow + '>',
     t('tui.menu.quit'),
   ]
@@ -264,7 +270,7 @@ function menuLabels(t: T, lang: Lang): string[] {
  * look up the per-item detail line (`tui.menudetail.<id>`) for the selection. */
 const MENU_IDS = [
   'launch', 'refresh', 'backup', 'rollback', 'reset',
-  'mount', 'plugins', 'logs', 'sideload', 'hot', 'lang', 'quit',
+  'mount', 'plugins', 'logs', 'sideload', 'hot', 'update', 'lang', 'quit',
 ] as const
 
 /** Map a one-shot `watchOnce` verdict to a short localized outcome label for the
@@ -316,15 +322,16 @@ export function buildFrame(f: FrameInput): string {
   // The banner is a "nice to have": show it only when there is room; on small
   // heights use a one-line compact header so nothing is occluded.
   const compact = rows < 16
+  const ver = f.version ? ' v' + f.version : ''
   if (compact) {
-    L.push(row(BOLD + 'QAQ · ' + f.t('tui.langLabel', { l: f.lang === 'zh' ? '中文' : 'EN' }) + RESET, W))
+    L.push(row(BOLD + 'QAQ' + ver + ' · ' + f.t('tui.langLabel', { l: f.lang === 'zh' ? '中文' : 'EN' }) + RESET, W))
   } else {
     if (f.color) {
       for (const l of bannerGradient(QAQ_ART, BLUE_GRAD[0], BLUE_GRAD[1])) L.push('  ' + l)
     } else {
       for (const l of QAQ_ART) L.push('  ' + l)
     }
-    L.push(row(DIM + f.profile + ' · ' + f.t('tui.langLabel', { l: f.lang === 'zh' ? '中文' : 'EN' }) + RESET, W))
+    L.push(row(DIM + f.profile + ' ·' + ver + ' · ' + f.t('tui.langLabel', { l: f.lang === 'zh' ? '中文' : 'EN' }) + RESET, W))
   }
   L.push(dblRule(W))
 
@@ -355,6 +362,10 @@ export function buildFrame(f: FrameInput): string {
   // Hot-update live status line (watchers / auto-restart toggles).
   if (f.hotLine) {
     L.push(row(CYAN + '♨ ' + f.hotLine + RESET, W))
+  }
+  // Version-update notice (Beta): "- 有新更新 vX.X.X" when a newer release exists.
+  if (f.updateLine) {
+    L.push(row(YEL + '- ' + f.updateLine + RESET, W))
   }
   if (!compact) {
     const labelW = 12
@@ -470,6 +481,12 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
    *  while active; null once stopped (the url/last stay for one repaint). */
   let sideGuard: { timer: ReturnType<typeof setInterval> | null; busy: boolean; url: string; last: string; lastOk: boolean } | null = null
   let message = t('tui.msg.placeholder')
+  // Version-update check state (Beta). `latest` is the remote version found by
+  // the last check; `available` means latest > local — the status line then
+  // shows "- 有新更新 vX.X.X" and pressing the menu item again confirms the
+  // update (downloads the master source archive).
+  const version = resolveLocalVersion()
+  let updateState: { latest: string | null; available: boolean } | null = null
   let report: EnvReport | null = null
   let selected = 0
 
@@ -643,7 +660,7 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
     const sgStatus = sideGuard && sideGuard.timer
       ? { url: sideGuard.url, last: sideGuard.last, lastOk: sideGuard.lastOk, intervalMs: SIDE_GUARD_INTERVAL_MS }
       : undefined
-    out.write(buildFrame({ home, profile, t, lang, activeGuard, message, report, mode, conn, sideGuard: sgStatus, logs, plugins, backups, hot, hotLine: hotStatusLine(), cols, rows, selected, color: colorOn, clearFirst: firstRender }))
+    out.write(buildFrame({ home, profile, t, lang, activeGuard, message, report, mode, conn, sideGuard: sgStatus, logs, plugins, backups, hot, hotLine: hotStatusLine(), version, updateLine: updateState?.available && updateState.latest ? t('tui.update.hasNew', { version: updateState.latest }) : null, cols, rows, selected, color: colorOn, clearFirst: firstRender }))
     firstRender = false
   }
 
@@ -862,10 +879,44 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
       case 7: enterLogs('error'); paint(); return false
       case 8: view = 'menu'; { const r = await toggleSideGuard(); if (r !== undefined) message = r; } paint(); return false
       case 9: view = 'hot'; paint(); return false
-      case 10: setLang(lang === 'zh' ? 'en' : 'zh'); refreshReport(); return false
-      case 11: return true // quit
+      case 10: await runUpdateFlow(); return false
+      case 11: setLang(lang === 'zh' ? 'en' : 'zh'); refreshReport(); return false
+      case 12: return true // quit
       default: return false
     }
+  }
+
+  /** "检测更新 (Beta)" — two-step flow: the first press checks GitHub for a
+   *  newer version; when one is found the status line shows "- 有新更新 vX.X.X"
+   *  and a second press confirms the update (downloads the master source
+   *  archive into ~/.dsh/.qaq/update/ and prints the upgrade steps). */
+  async function runUpdateFlow(): Promise<void> {
+    if (updateState?.available && updateState.latest) {
+      // Confirmed update: download the source archive.
+      message = t('tui.update.downloading', { version: updateState.latest })
+      paint()
+      const res = await downloadUpdateSource({ version: updateState.latest, dir: join(qaqDir(home), 'update') })
+      if (res.ok && res.path) {
+        message = t('tui.update.downloaded', { path: res.path })
+        log.access('update source downloaded to ' + res.path, { action: 'update-download', version: updateState.latest, ok: true })
+      } else {
+        message = t('tui.update.downloadFailed', { error: res.error ?? '?' })
+        log.access('update source download failed: ' + (res.error ?? '?'), { action: 'update-download', ok: false })
+      }
+      return
+    }
+    message = t('tui.update.checking')
+    paint()
+    const r = await checkForUpdate()
+    if (!r.ok) {
+      updateState = null
+      message = t('tui.update.failed', { error: r.error ?? '?' })
+      return
+    }
+    updateState = { latest: r.latest, available: r.updateAvailable }
+    message = r.updateAvailable
+      ? t('tui.update.available', { current: r.current, latest: r.latest ?? '?' })
+      : t('tui.update.latest', { version: r.current })
   }
 
   /**

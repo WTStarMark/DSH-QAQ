@@ -6,6 +6,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/) — each release 
 
 ---
 
+## [0.4.4] — 2026-08-18 · version update check (Beta) & version alignment
+
+### Added
+- Version update check (Beta): the TUI shows the local version in the header, gains a "Check for updates (Beta)" menu item, and shows "- new update vX.X.X" in the status area when a newer release exists on GitHub (<https://github.com/WTStarMark/QAQ>).
+- Confirmed-update flow: pressing the item again after an update is found downloads the latest master source archive into `~/.dsh/.qaq/update/` and prints the upgrade steps (`qaq setup`).
+
+### Changed
+- Version alignment: `package.json` and `packages/dsh-qaq/package.json` bumped from `0.1.0` to `0.4.4`.
+
+---
+
 ## [0.4.3] — 2026-08-18 · docs restructure & hardening
 
 ### Changed
