@@ -31,6 +31,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Style check
+        run: pnpm lint
+
       - name: Build
         run: pnpm build
 

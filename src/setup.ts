@@ -1,8 +1,9 @@
 /**
  * qaq setup — install dependencies and build the QAQ bundle from the command
  * line (cross-platform replacement for the deleted bin/qaq-install*.cmd
- * one-click installers). Runs pnpm (with an npm/corepack fallback), then
- * `pnpm build` to emit dist/qaq.mjs + regenerate the plugin lib.
+ * one-click installers). Runs pnpm >= 11 (with an `npx pnpm@11` fallback when
+ * pnpm is missing or too old), then `pnpm build` to emit dist/qaq.mjs +
+ * regenerate the plugin lib.
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -32,10 +33,15 @@ function sh(cmd: string, args: string[]): string {
   }
 }
 
-/** Detect whether pnpm is available on PATH. */
-function hasPnpm(): boolean {
-  try { execFileSync(process.platform === 'win32' ? 'where' : 'which', ['pnpm'], { stdio: 'ignore' }); return true }
-  catch { return false }
+/**
+ * Detect the local pnpm major version, or null when pnpm is missing/unusable.
+ */
+function pnpmMajorVersion(): number | null {
+  try {
+    const v = sh('pnpm', ['--version']).trim()
+    const m = /^v?(\d+)/.exec(v)
+    return m ? Number(m[1]) : null
+  } catch { return null }
 }
 
 /**
@@ -51,18 +57,30 @@ export function runSetup(_installOnly = false): SetupResult {
     if (nodeMajor < 22) { throw new Error('Node.js >= 22 is required (found v' + process.version + ')') }
     steps.push('node ' + process.version)
 
+    // The workspace pins pnpm@11 (packageManager + the `allowBuilds` key in
+    // pnpm-workspace.yaml). A local pnpm 10 would ignore `allowBuilds`, block
+    // esbuild's postinstall, and leave a silently broken install — so fall
+    // back to `npx pnpm@11` when the local pnpm is missing or older than 11.
+    const major = pnpmMajorVersion()
+    const useNpxFallback = major === null || major < 11
+    if (useNpxFallback) {
+      steps.push('pnpm ' + (major === null ? 'not found' : major + ' too old (need >= 11)') + ' — using npx pnpm@11')
+    } else {
+      steps.push('pnpm ' + major)
+    }
+    // One package-manager choice drives both install and build.
+    const run = (args: string[]): void => {
+      if (useNpxFallback) sh('npx', ['-y', 'pnpm@11', ...args])
+      else sh('pnpm', args)
+    }
+
     if (!existsSync(join(root, 'node_modules'))) {
-      if (hasPnpm()) {
-        sh('pnpm', ['install']); steps.push('pnpm install')
-      } else {
-        // corepack/npx fallback
-        sh('npx', ['-y', 'pnpm@11', 'install']); steps.push('pnpm install (via npx)')
-      }
+      run(['install']); steps.push('pnpm install')
     } else {
       steps.push('node_modules present (skipped install)')
     }
 
-    sh('pnpm', ['build']); steps.push('pnpm build')
+    run(['build']); steps.push('pnpm build')
     ok = true
   } catch (e) {
     ok = false

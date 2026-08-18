@@ -157,9 +157,9 @@ maybeRollback → back up the broken config to rolled-back → overwrite the pro
 ```
 src/                        # main program (ESM; tsx or esbuild → dist/qaq.mjs)
 packages/dsh-qaq/           # DSH backup plugin (standalone package; lib/index.js is the build output)
-bin/                        # lazy launcher scripts (.cmd files are GBK-encoded for zh-CN cmd; en variants are ASCII)
+bin/                        # CLI entry: qaq.cmd (ASCII dev wrapper) + qaq.mjs (dist/tsx bootstrap)
 qaq-test-plugins/           # integration fixture (dsh-broken-theme → deterministic red screen)
 tools/                      # smoke.mjs / rollback-test.ps1 / loop-test.ps1
-test/                       # vitest unit tests (42)
+test/                       # vitest unit tests (26 spec files)
 docs/                       # this documentation set (en = *.md, zh = *.zh.md)
 ```

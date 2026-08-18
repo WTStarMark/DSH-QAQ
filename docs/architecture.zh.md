@@ -157,9 +157,9 @@ maybeRollback → 备份坏配置到 rolled-back → 覆盖 profile 配置 → �
 ```
 src/                        # 主程序（ESM，tsx 或 esbuild 打包 dist/qaq.mjs）
 packages/dsh-qaq/           # DSH 备份插件（独立包，lib/index.js 为构建产物）
-bin/                        # 懒人脚本启动器（.cmd 为 GBK 编码，勿用 UTF-8 改写）
+bin/                        # CLI 入口：qaq.cmd（纯 ASCII 开发包装）+ qaq.mjs（dist/tsx 引导）
 qaq-test-plugins/           # 集成测试夹具（dsh-broken-theme → 确定性红屏）
 tools/                      # smoke.mjs / rollback-test.ps1 / loop-test.ps1
-test/                       # vitest 单测（63 个）
+test/                       # vitest 单测（26 个 spec 文件，254 个用例）
 docs/                       # 本文档集合
 ```

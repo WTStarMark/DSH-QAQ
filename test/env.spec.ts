@@ -44,7 +44,7 @@ describe('env.findCheckoutCli / resolveCommand', () => {
     if (prev !== undefined) process.env.QAQ_DSH_CMD = prev;
   });
 
-  it('auto-discovers a sibling checkout next to the cwd (the qaq-web.cmd layout)', () => {
+  it('auto-discovers a sibling checkout next to the cwd (side-by-side layout)', () => {
     // root/checkout = the DSH clone; root/tool = where the user runs qaq from.
     const root = mkdtempSync(join(tmpdir(), 'dsh-sibling-'));
     mkdirSync(join(root, 'checkout', 'apps', 'cli', 'src'), { recursive: true });

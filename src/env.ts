@@ -75,8 +75,8 @@ export function findAutoCheckout(): { root: string; cli: string } | null {
     dir = parent
   }
   // Sibling scan: any direct child of the cwd's parent that looks like a DSH
-  // checkout (has apps/cli). Covers double-clicking qaq-web.cmd from the tool's
-  // own directory while the checkout lives next to it.
+  // checkout (has apps/cli). Covers running qaq from the tool's own directory
+  // while the checkout sits next to it (the common side-by-side layout).
   const parent = dirname(process.cwd())
   if (parent !== process.cwd()) {
     try {

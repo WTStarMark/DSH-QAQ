@@ -9,8 +9,9 @@
 ## 1. 测试命令
 
 ```bash
-pnpm test      # vitest run —— 11 个 spec 文件，63 个用例
+pnpm test      # vitest run —— 26 个 spec 文件，254 个用例
 pnpm smoke     # 一键回归：单测 + 隔离 home 种子/破坏/守卫检测
+pnpm lint      # 零依赖风格门禁（行尾空格、制表符、TODO 标记、文件末尾换行）
 pnpm typecheck # tsc --noEmit
 ```
 
@@ -28,7 +29,7 @@ pnpm typecheck # tsc --noEmit
 | `guard.spec.ts` | 编排（mock spawn/detect） | UI 永不落定必须 kill 子进程（泄漏回归）；确认窗口内劣化不得记 last-good；**宿主绑定后崩溃 → 归类 host 而非 unknown（分类回归）**；retriesExhausted 语义；**确定性 UI 红屏首次即回滚（有效阈值 1）** |
 | `spawn-dsh.spec.ts` | 真实子进程就绪跟踪 | 端口开启前退出 → ready 立即拒绝并给真实退出码；命令不存在 → spawn error 不干等超时 |
 | `detector-ui.spec.ts` | L3 判据 | 红屏文本判 failed 且提取 detail/failedEntries；健康 composer 判 ok；启动页判 loading；**0ms 超时至少探测一次（confirm-ms 0 回归）**；**"waiting for service" 红屏判 definitive** |
-| `env.spec.ts` | 环境发现 | findCheckoutCli / QAQ_DSH_CMD / --cwd checkout / **兄弟目录自动发现（qaq-web.cmd 布局）** / isPortFree |
+| `env.spec.ts` | 环境发现 | findCheckoutCli / QAQ_DSH_CMD / --cwd checkout / **兄弟目录自动发现（checkout 与 cwd 并排）** / isPortFree |
 | `install-plugin.spec.ts` | 插件挂载 | 未初始化 profile 优雅失败；真实挂载幂等 + **user patch 不被触碰**；插件目录解析 |
 | `log.spec.ts` | 日志系统 | JSON 行格式、error 双写、access 通道、`.in()` 类别、按大小轮转 |
 | `tui.spec.ts` | 仪表盘 | 布局不溢出；首帧才全清屏；日志/插件面板；**备份管理面板：自动/手动分群渲染、`◈` 平铺光标跨两群、空集占位** |

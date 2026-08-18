@@ -1,6 +1,6 @@
 # Lazy Launcher Console & Environment Discovery (console.ts / env.ts / install-plugin.ts / bin/)
 
-This document dissects the user-facing lazy launcher layer: environment auto-discovery and the pre-launch self-check, the interactive CMD menu, automatic backup-plugin mounting, and the implementation notes for the `.cmd` launchers.
+This document dissects the user-facing launcher layer: environment auto-discovery and the pre-launch self-check, the interactive CMD menu, automatic backup-plugin mounting, and the CLI entry (`bin/`).
 
 Related: [Architecture Overview](architecture.md) · [Guard Lifecycle](guard-lifecycle.md)
 
@@ -107,7 +107,7 @@ DSH resolves each `dsh.profile.bundles` entry in order, reads its `dsh.bundle.pa
 | `qaq setup` | one-command install: check Node >= 22 → pnpm deps (npx fallback) → esbuild build + plugin lib → verify the artifact |
 | `qaq tui` / `qaq console` | full-screen live dashboard (TTY) or a compact menu otherwise |
 
-**Encoding red line**: `.zh.cmd` files must be **GBK(CP936) + CRLF** (zh-CN cmd parses batch files as ANSI). Saving them as UTF-8 garbles the Chinese banner and the garbage fragments get executed as commands. When editing them, read/write with `Encoding.GetEncoding(936)` via PowerShell, use `%~dp0` for relative location, and never write absolute paths. The default-named `.cmd` files are pure ASCII (no encoding risk).
+**Encoding note**: no GBK batch files remain in `bin/` — `qaq.cmd` is pure ASCII (maintain as UTF-8, LF). One-click install/build lives in the `qaq setup` command (`src/setup.ts`), which enforces pnpm >= 11 (falling back to `npx pnpm@11` when the local pnpm is missing or too old — see the `allowBuilds` key in `pnpm-workspace.yaml`).
 
 ---
 

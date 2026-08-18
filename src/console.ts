@@ -3,8 +3,7 @@
  * 提供一键启动守卫、查看状态、手动备份/回滚、重置计数、自动挂载
  * dsh-qaq 备份插件、查看实时日志等功能。
  *
- * UI 语言：bin\qaq-web.cmd 固定英文，bin\qaq-web.zh.cmd 固定中文；
- * 直接 `qaq console` 默认中文（可用 --lang en / $QAQ_LANG=en 切换）。
+ * UI 语言：直接 `qaq console` / `qaq tui` 默认中文（可用 --lang en / $QAQ_LANG=en 切换）。
  */
 import * as readline from 'node:readline'
 import { readFileSync } from 'node:fs'

@@ -1,292 +1,287 @@
-# QAQ — DeepSeek Harness Launch Resilience Guard
+# QAQ — DeepSeek Harness 启动容灾守卫
 
-[简体中文](./README.zh.md)
+[English](./README.EN.md)
 
-QAQ is a **launch resilience guard** for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH). When a disrupted profile configuration prevents DSH from starting normally — a crashed host **or** a red-screened Web UI — QAQ automatically restores the configuration snapshot from the last successful boot and restarts, while preserving the broken config for manual recovery.
+当 profile 配置损坏导致 DeepSeek Harness（下称 DSH）无法正常启动（宿主崩溃 **或** Web UI 红屏）时，QAQ 自动回溯到「上一次成功启动」的配置快照并重启，同时保留被回退的坏配置便于手动还原。
 
-**Author**: WTStarMark
+**作者**：WTStarMark
 
-**Non-invasive**: QAQ never edits DSH source. The guard is a standalone executable that supervises the `dsh web` process and reads the browser's real DOM over CDP; the backup plugin only reads configuration and never changes behavior.
+**不侵入 DSH 源码**：守卫是独立可执行，只通过 `spawn` 进程 + CDP 读浏览器真实 DOM；备份插件只读配置不改行为。
 
 <p align="center">
-  <img src="img/en.png" alt="QAQ interface" width="49%" />
   <img src="img/zh.png" alt="QAQ 界面展示" width="49%" />
+  <img src="img/en.png" alt="QAQ interface" width="49%" />
 </p>
 
-## What it solves
+## 它解决什么
 
-DSH's Web surface has a failure mode where the **host is alive but the UI red-screens**: the host process runs, the port responds, yet the browser renders `Failed to load plugins`. Such failures are invisible to host-process monitoring and cannot be detected by `curl` (the server-side HTML ships an empty `<div id="root">`, rendered client-side). The only reliable non-invasive probe is to open the page in a headless browser and read the actual DOM. QAQ's UI-detection line is exactly that.
+DSH Web 存在一种「宿主活、UI 红屏」的失败模式：宿主进程正常、端口可达，但浏览器渲染出 `Failed to load plugins`。这类失败纯监听宿主进程抓不到、纯 `curl` 抓空 root 也测不到（服务端 HTML 里 `<div id="root">` 是空的，由 React 运行时渲染）。唯一可靠且不侵入的手段，是用 headless 浏览器打开页面、读取真实 DOM。QAQ 的 UI 侦测线正是这么做。
 
-## Requirements
+## 环境要求
 
 - Node.js >= 22
-- A Chrome/Chromium/Edge binary on the machine (used headlessly via CDP; no Playwright/Puppeteer dependency)
-- The `dsh` command on `PATH`, or an explicit `QAQ_DSH_CMD` / `--cwd`
+- 机器上有 Chrome/Chromium/Edge（经 CDP 无头驱动；无 Playwright/Puppeteer 依赖）
+- `dsh` 在 `PATH`，或用 `QAQ_DSH_CMD` / `--cwd` 指定 DSH 启动命令与工作目录
 
-## Install / Quick start
+## 安装 / 快速上手
 
-**One command**: `qaq setup` installs dependencies + builds, then `qaq tui` opens the full-screen live guard dashboard.
+**一条命令**：`qaq setup` 安装依赖并构建，然后 `qaq tui` 打开全屏实时守卫仪表盘。
 
-Or manually:
+手动安装：
 
 ```bash
 pnpm install
-pnpm build   # bundles dist/qaq.mjs AND regenerates packages/dsh-qaq/lib (the plugin)
+pnpm build   # 产出 dist/qaq.mjs 单文件可执行
 ```
 
-> `bin/qaq.cmd` runs the CLI through tsx for development; the global `qaq`
-> command (from `pnpm build`) runs the bundled `dist/qaq.mjs`. Both share the
-> same CLI surface. `qaq console` / `qaq tui` opens the full-screen dashboard
-> on a TTY, or a compact menu otherwise.
-
-Take over `dsh web` from a visible CMD window:
+**日常使用推荐 `qaq tui`**（全屏实时仪表盘，全能入口：一键启动守卫、浏览日志、管理插件、热更新、侧载 watch 都在里面）：
 
 ```bash
 qaq tui --port 3080
-# or a single supervised boot without the dashboard:
-qaq dsh web --port 3080 --yes
 ```
 
-or directly:
+> 不想用仪表盘时，也可以直接单次受监督启动：
 
 ```bash
 qaq dsh web --port 3080 --yes
 ```
 
-> **Which `dsh` runs?** The guard defaults to `dsh web` (`PATH` resolution). To run from the DSH source tree instead:
-> 
+> **用哪个 dsh 启动？** 守卫默认执行 `dsh web`（PATH 解析）。若要从 DSH 源码树启动：
+>
 > ```bash
 > QAQ_DSH_CMD="node --import tsx/esm apps/cli/src/bin.ts web" qaq dsh web --cwd /path/to/dsh-checkout
 > ```
 
-> **Pre-launch self-check**: `qaq dsh web` (and the console) auto-discover the `dsh` command — `QAQ_DSH_CMD` → `--cwd` → a nearby DSH checkout (ancestors of the current directory, plus a sibling checkout sitting next to it, e.g. QAQ and `deepseek-harness` side by side) → `PATH` — pick a Chrome/Chromium/Edge binary for the UI probe, and verify the target port is free. Problems are reported with actionable Chinese hints before anything is spawned.
+> **启动前自检**：`qaq dsh web`（和控制台）会自动发现 `dsh` 命令——`QAQ_DSH_CMD` → `--cwd` → 就近的 DSH checkout（当前目录的祖先链，以及**与当前目录并排的兄弟 checkout**，如 QAQ 与 `deepseek-harness` 同目录并列）→ `PATH`——挑选 Chrome/Chromium/Edge 作为 UI 探测浏览器、确认目标端口空闲。发现问题会在拉起任何进程前给出中文可操作提示。
 
-## Commands
+## 命令面
 
-| Command                                      | Purpose                                                                                                     |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `qaq dsh web [--port N] [--yes]`             | supervised startup: detect host/UI failure -> count -> roll back when triggered -> restart (with anti-loop) |
-| `qaq status`                                 | print a summary of `~/.dsh/.qaq/state.json`                                                                 |
-| `qaq backup [--profile web]`                 | snapshot the current profile into the MANUAL backup set (independent 3-snapshot quota)                                                                   |
-| `qaq restore --to <snapDir> [--profile web]` | restore a profile from a snapshot directory                                                                 |
-| `qaq reset --profile web`                    | zero the failure counters                                                                                   |
-| `qaq tui` / `qaq console`                   | open the full-screen live dashboard (or a compact menu on non-TTY)                                          |
-| `qaq setup`                                | install dependencies + build (one command)                                                                  |
-| `qaq install-plugin [--profile web]`         | auto-mount the `dsh-qaq` backup plugin into a profile                                                       |
+| 命令                                         | 作用                                                                    |
+| -------------------------------------------- | ----------------------------------------------------------------------- |
+| `qaq dsh web [--port N] [--yes]`             | 接管启动：侦测 host/UI 失败 -> 计数 -> 触发时回滚 -> 重启（带防死循环） |
+| `qaq status`                                 | 显示 `~/.dsh/.qaq/state.json` 摘要                                      |
+| `qaq backup [--profile web]`                 | 手动快照当前 profile 进「手动备份」集（独立保留 3 份）                                |
+| `qaq restore --to <snapDir> [--profile web]` | 手动从某快照还原 profile（自动/手动集皆可）                                     |
+| `qaq reset --profile web`                    | 清零失败计数                                                            |
+| `qaq tui` / `qaq console`                    | 打开全屏实时仪表盘（非 TTY 时退回简洁菜单）                             |
+| `qaq setup`                                  | 一条命令安装依赖 + 构建                                                 |
+| `qaq install-plugin [--profile web]`         | 自动把 dsh-qaq 备份插件挂载进 profile                                   |
 
-Global: `--yes` auto-confirms rollbacks.
+全局开关：`--yes` 自动确认回滚。
 
-## Dashboard (`qaq tui` / `qaq console`)
+## 仪表盘（`qaq tui` / `qaq console`）
 
-On a terminal (`qaq tui`) QAQ shows a **full-screen, auto-refreshing dashboard** — the all-in-one entry for launching, watching, browsing logs, and managing plugins. It shows guard status, the current operating mode (launcher / sideload / idle), failure counters, last-good snapshot, plugin mount state, a **log viewer**, and a **plugin manager**. On a non-TTY it falls back to a one-screen menu (`qaq console`). The interface is **bilingual** — press `10` in the TUI to toggle en/zh (a bare `qaq console` defaults to Chinese; `$QAQ_LANG` or `--lang` overrides). The actions available are:
+在终端（`qaq tui`）下 QAQ 显示**全屏、自动刷新**的仪表盘——TUI 是**全能入口**：既能启动守卫（启动器模式），也能附着到外部启动的 DSH（侧载模式），还能浏览日志、管理插件。面板显示守卫状态、当前运行模式（启动器 / 侧载 / 空闲）、失败计数、last-good 快照、插件挂载状态、**日志查看器**和**插件管理器**。非 TTY 时退回一次性屏幕菜单（`qaq console`）。界面**双语**——在 TUI 内按 `10` 切换 en/zh（裸 `qaq console` 默认中文；`$QAQ_LANG` 或 `--lang` 可覆盖）。可用操作：
 
 ```
-[1]  supervise a dsh web boot (guard)   — fresh preflight each time, rollback + restart (launcher mode)
-[2]  refresh state panel                — also auto-refreshes every ~1s
-[3]  back up the current profile into the MANUAL backup set
-[4]  backup/rollback list               — open the backup manager: auto vs manual groups, pick one to restore
-[5]  reset failure counters
-[6]  mount the dsh-qaq backup plugin     — idempotent, rollback-safe
-[7]  manage plugins                     — install / uninstall / enable / disable
-[8]  view logs                           — full-screen log viewer (error/access/host/qaq)
-[9]  sideload watch                      — run a continuous sideload guard on an external DSH (toggle)
-[10] hot update                         — client-plugin live-reload watch + auto-restart toggles
-[11] toggle en / zh
-[12] quit
+[1] 一键启动守卫（接管 dsh web）     — 启动器模式：每次自检，回滚 + 重启
+[2] 刷新状态面板                     — 同时约每 1 秒自动刷新
+[3] 手动备份当前配置（进「手动备份」集）
+[4] 备份/回滚列表                 — 打开备份管理子屏：分「自动备份」与「手动备份」两群，选一项还原
+[5] 重置失败计数
+[6] 挂载 dsh-qaq 备份插件             — 幂等、失败即撤销
+[7] 管理插件                         — 安装 / 卸载 / 停用 / 启用
+[8] 查看日志                         — 全屏日志查看器（error/access/host/qaq）
+[9] 侧载 watch                       — 对外部启动的 DSH 运行持续侧载守卫（开关切换）
+[10] 热更新                          — client 插件热更监控 + bundle/dist 自动重启开关
+[11] 切换语言 en / zh
+[12] 退出
 ```
 
-Navigation: `↑`/`↓` (or `j`/`k`) move the selection, `Enter`/`Space` run the action, digits `1..N` jump straight to an action, `q`/`Esc`/`Ctrl+C` quit.
+导航：`↑`/`↓`（或 `j`/`k`）移动选择，`Enter`/`Space` 执行，数字 `1..N` 直达动作，`q`/`Esc`/`Ctrl+C` 退出。
 
-- **Log viewer** (`[8]`): `1`–`4` switch between `error.log` / `access.log` / `host.log` / `qaq.log`, `↑`/`↓` scroll, `q`/`Esc`/`Enter` return to the menu.
-- **Plugin manager** (`[7]`): manages the **real DeepSeek Harness** plugins. It auto-discovers the DSH installation (home + source checkout, detected running process via heartbeat), scans the checkout's `packages/` for the installable `@deepseek-ai/dsh-*` bundle packages, lists what's installed/enabled in the active profile, and lets you `↑`/`↓` select then `e` enable, `d` disable, `u` uninstall, `i` install. Disabling keeps the module installed but removes it from the profile's boot bundle; uninstalling removes both. It never touches QAQ's own repository.
-- **dsh-qaq plugin**: **auto-mounted when the dashboard opens** — if the profile does not have dsh-qaq installed/enabled, QAQ mounts it automatically (bundle list entry + module link); an already-installed one is left untouched (best-effort, failures only warn). Menu `[6]` is a re-runnable **overwrite/update entry**: it validates the module link target and repairs a stale/orphaned link pointing at an old QAQ copy (junction target check, orphan repair, lib rebuild) — an old link never silently keeps loading old plugin code; a real directory/file at the path is never replaced (user-data protection).
-- **Operating modes**: the status line shows which integration mode is active — **launcher** (QAQ owns a supervised `dsh web`), **sideload** (an external DSH is up, or a continuous sideload guard is watching it), or **idle**.
-- **Backup manager** (`[4]`): the backup-list sub-screen, split into **auto backups** (written by the guard on confirmed health / the plugin after a real conversation; independent **10**-snapshot quota) and **manual backups** (written by `[3]` / `qaq backup`; independent **3**-snapshot quota). `↑`/`↓` move the selection, `Enter` restores the chosen backup, `q`/`Esc` returns.
-- **Sideload guard** (`[9]`): a **toggle**. First press resolves the external DSH (the `--port` you gave `qaq tui`, else the dsh-qaq plugin heartbeat), pins that port, then keeps probing the real DOM every ~15s — counting host/UI failures and rolling back at threshold (auto-confirm, CLI-owned), exactly like `qaq watch`. Press `[9]` again (or quit) to stop. The status line shows the watched URL and the last probe outcome.
-- **Hot update** (`[10]`): a three-channel plugin hot-update panel, **all toggles off by default**:
-  - `[1]` **client bundle watch** — watches every enabled client plugin's `lib/client.js`; DSH's own client-hmr hot-swaps the browser fiber with no restart. QAQ owns **verification** (fresh-page CDP probe + the dsh-qaq plugin inventory) and **rollback**: the pre-change bundle is snapshotted to `~/.dsh/.qaq/hot-snapshots/`, on a failed swap the file is restored (which re-triggers client-hmr), re-verified, and only a persistent failure escalates to a supervised restart. It only reads/writes `.qaq` and profile files — **never state.json / last-good / failure counters / the rollback fence**.
-  - `[2]` **auto-restart on bundle-list change** — a change to `dsh.profile.bundles` (plugin add/remove) needs a restart to apply; when on, the guard detects it and performs a **supervised restart** (kill → re-boot → health-confirm window, existing rollback path on failure) — a "pseudo" hot update. Requires launcher mode (`[1]`).
-  - `[3]` **auto-restart on web dist change** — the frontend `apps/web/dist` (or installed `dsh-web-frontend/dist`) cannot hot-swap; when on, a rebuild triggers the same supervised restart.
-  - In the plugin manager (`[7]`), enabling/disabling a **client-kind** plugin writes `cordis.patch.yml` and DSH's config HMR applies it **live** — QAQ polls the plugin inventory to confirm (`applied live ✔`), says "applies at next boot" when DSH is offline, and reports "old tree still running" on failure (DSH HMR keeps the last-good tree, matching the guard's never-break-the-boot posture). **Bundle-kind** changes still state "restart to apply"; pair them with `[2]`.
+- **日志查看器**（`[8]`）：`1`–`4` 切换 `error.log` / `access.log` / `host.log` / `qaq.log`，`↑`/`↓` 滚动，`q`/`Esc`/`Enter` 返回菜单。
+- **插件管理器**（`[7]`）：管理**真实的 DeepSeek Harness** 插件。它自动发现 DSH 安装（home + 源码 checkout，并通过心跳检测正在运行的进程），扫描 checkout 的 `packages/` 找到可安装的 `@deepseek-ai/dsh-*` bundle 包，列出当前 profile 里已安装/已启用的项；`↑`/`↓` 选中插件，然后 `e` 启用、`d` 停用、`u` 卸载、`i` 安装；`q`/`Esc` 返回菜单。**停用** = 保留模块但移出启动 bundle；**卸载** = 两者都移除。它绝不改动 QAQ 自己的仓库。
+- **dsh-qaq 插件**：**TUI 打开时自动挂载**——若 profile 未安装/未启用 dsh-qaq，QAQ 自动完成挂载（写入 bundle 列表 + 建立模块链接），已安装启用的不受打扰（best-effort，失败仅告警）。菜单 `[6]` 是可随时重跑的**覆盖更新入口**：校验模块链接目标，指向过期/失效 QAQ 副本（junction 目标校验、孤儿链接、重建 lib）时自动修复——旧链接绝不会静默加载旧插件代码；真实目录/文件占位则拒绝替换（保护用户数据）。
+- **备份管理**（`[4]`）：备份列表子屏，明确区分**自动备份**与**手动备份**两群——自动备份（守卫确认健康 / 插件真实对话后自动产生，独立保留 **10** 份）与手动备份（`[3]` 或 `qaq backup` 产生，独立保留 **3** 份）互不干扰。`↑`/`↓` 移动选择、`Enter` 还原到该项、`q`/`Esc` 返回。
+- **运行模式**：状态行显示当前集成模式 —— **启动器**（QAQ 拥有被监督的 `dsh web`）、**侧载**（检测到外部 DSH，或在持续监视它）、或**空闲**。
+- **侧载守卫**（`[9]`）：一个**开关**。首次按下会先解析外部 DSH 目标（`qaq tui --port` 指定的端口，否则用 dsh-qaq 插件心跳），固定该端口后每隔约 15s 探测一次真实 DOM——计数 host/UI 失败并在达到阈值时回滚（自动确认、CLI 决策），与 `qaq watch` 行为一致。再按 `[9]`（或退出仪表盘）即停止。状态行会显示被监视的 URL 与最近一次探测结果。
+- **热更新**（`[10]`）：插件热更新的三通道开关面板，全部**默认关闭**、可选启用：
+  - `[1]` **client bundle 热更监控**——监视每个已启用 client 插件的 `lib/client.js`（DSH 的 client-hmr 会热换浏览器 fiber，无需重启）。QAQ 负责**验证**（CDP 全新页面探测 + dsh-qaq 插件清单）与**回滚**：热换前把旧 bundle 快照进 `~/.dsh/.qaq/hot-snapshots/`，验证失败时还原文件（再次触发热换回旧码）并复核，仍失败才升级到受监督重启。**它只读 `.qaq` 与 profile 文件，绝不触碰 state.json / last-good / 失败计数 / 防循环栅栏**。
+  - `[2]` **bundle 列表变化自动重启**——profile `package.json` 的 `dsh.profile.bundles` 变化（增删插件）需要重启才生效；开启后守卫检测到变化会自动执行**受监督重启**（kill → 重新 boot → 健康确认窗口，失败走既有回滚），即"伪更新"。需先按 `[1]` 进入启动器模式。
+  - `[3]` **web dist 变化自动重启**——DSH 前端 `apps/web/dist`（或已安装的 `dsh-web-frontend/dist`）重建后无法热换，开启后同样触发受监督重启。
+  - 插件管理器（`[7]`）里对 **client 类插件**的启用/停用走 `cordis.patch.yml`，DSH 的配置 HMR 会**即时生效**——QAQ 会轮询插件清单确认已生效（`已热生效 ✔`）；DSH 离线时提示"重启后生效"；失败时提示"旧树仍在运行"（DSH HMR 失败保留 last-good 树，与守卫"失败不破坏"哲学一致）。**bundle 类插件**的变更仍标记"重启后生效"，可配合 `[2]` 自动重启。
 
-The panel auto-refreshes while a supervised `dsh web` runs; the guard lock is held until it exits (a second launch is refused and a stale port check never misfires). `q`/`Esc`/`Ctrl+C` quit the dashboard; a supervised child is killed so no process is left holding the port.
+受监督的 `dsh web` 运行期间，守卫锁会一直持有到它退出（期间拒绝二次启动，也不会被过期的端口检查误导）；`q`/`Esc`/`Ctrl+C` 退出仪表盘时会先杀掉受监督子进程，避免进程残留占住端口。
 
-## Operations guide
+控制台在每次渲染菜单前自动清屏——窗口永远只保留一屏内容（持久头部 + 上次操作结果 + 菜单），不再堆叠；状态/日志等详情视图会以 `[回车返回菜单]` 暂停，方便阅读。
 
-### First-time setup (Windows)
+## 操作指南
 
-1. **Install** — run `qaq setup`. It checks Node.js >= 22, installs dependencies (pnpm, with an npx fallback), and builds `dist/qaq.mjs` + the plugin lib.
-2. **Mount the backup plugin (recommended)** — run `qaq tui`, press `i` (mount the dsh-qaq backup plugin). This adds `dsh-qaq` to the profile's bundle list and links the module into the profile's `node_modules`. From then on, the plugin snapshots the config once a **real user conversation** has happened — the strongest proof the boot is actually usable. A host that settles but renders a web red screen never lets the user talk, so it is never recorded as last-good (backup-only; it never changes DSH behavior). The profile's own `cordis.patch.yml` is intentionally left untouched — DSH auto-loads the plugin's patch from its bundle declaration.
-3. **Launch** — press `1` (start the guard). The dashboard re-runs the pre-launch self-check (dsh command, browser, port), then supervises `dsh web`. Once the UI has been healthy for the confirmation window, the config is recorded as last-good and the guard keeps monitoring in the background.
-4. **Verify** — `qaq status`: `hostFailures` / `uiFailures` should be 0 and `lastSuccess` / `lastGoodSnapshot` present.
+### 首次配置（Windows）
 
-### Everyday use
+1. **安装** — 运行 `qaq setup`。它会检查 Node.js >= 22、安装依赖（pnpm，失败时回退 npx）、并构建 `dist/qaq.mjs`。
+2. **挂载备份插件（推荐）** — 打开 `qaq tui`（仪表盘打开时会自动挂载 dsh-qaq；若需手动重挂/覆盖更新，用菜单 `[6]`）。它把 `dsh-qaq` 加进 profile 的 bundle 列表，并在 profile 的 `node_modules` 里建好模块链接。此后插件会在**一次真实用户对话**发生后自动把配置快照到 `~/.dsh/.qaq`——因为只有人类真的发过消息才能证明这套配置可用（宿主 settle 但 Web UI 红屏的坏配置永远不会被记为 good，见下方"可疑 last-good"）。仅备份、绝不改 DSH 行为。profile 自己的 `cordis.patch.yml` 故意不动——DSH 会从 bundle 声明自动加载插件的 patch 层。
+3. **启动** — 在 TUI 菜单按 `1` 一键启动守卫。仪表盘会重新做启动前自检（dsh 命令、浏览器、端口），然后接管 `dsh web`。UI 稳定通过确认窗口后，配置被记为 last-good，守卫转入后台持续监控（随时可退出菜单，守卫继续运行）。
+4. **验证** — `qaq status`：`hostFailures` / `uiFailures` 应为 0，且存在 `lastSuccess` / `lastGoodSnapshot`。
 
-- Start DSH the same way every time: `qaq tui` → press `1`. Prefer not to start `dsh web` directly anymore — the guard owns the supervised process and is the only one that can detect a red screen.
-- If the UI red-screens (or the host crashes) **3 times in a row**, QAQ offers a rollback to the last-good config with a diff preview. Accept it — the broken config is preserved under `~/.dsh/.qaq/rolled-back/` for later inspection, and the guard restarts once automatically.
-- After a successful rollback + restart, the counters are zeroed and the anti-loop fence is cleared; the restored profile is the one you had before it broke.
+### 日常使用
 
-### Troubleshooting
+- 每次都用同一方式启动 DSH：`qaq tui` → 按 `1`。之后尽量不要再直接跑 `dsh web`——守卫是唯一能发现红屏的监督者。
+- 若 UI 连续红屏（或宿主崩溃）**3 次**，QAQ 会给出回滚确认（带 diff 预览）。接受即可——坏配置会保留在 `~/.dsh/.qaq/rolled-back/` 供事后检查，守卫会自动重启一次。
+- 回滚 + 重启成功后，失败计数清零、防死循环栅栏解除；恢复的配置就是坏掉之前的那份。
 
-| Symptom                                        | What to do                                                                                                                                                                                                                      |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Pre-launch self-check failed` — dsh not found | Put `dsh` on `PATH`, set `QAQ_DSH_CMD`, or pass `--cwd <dir>` pointing at the DSH checkout                                                                                                                                      |
-| `Port already in use` — port busy              | Stop the other process, or pick another port: `--port N`                                                                                                                                                                        |
-| UI red-screens again after a rollback          | Inspect the logs and the preserved bad config: `qaq tui` (logs are shown in the dashboard) or read, or read `~/.dsh/.qaq/log/` (`error.log`, `access.log`, `host.log`)                                                                                      |
-| Guard says `anti-loop fence is active`         | A rollback already happened within the last 5 minutes. Fix the config manually (see `rolled-back/`), then `qaq reset --profile web` to clear the counters                                                                       |
-| Want to undo a rollback                        | `qaq restore --to <snapDir> --profile web` with any directory under `~/.dsh/.qaq/history/auto/` (or `history/manual/`, `rolled-back/`)                                                                                     |
-| dsh-qaq not snapshotting                       | The plugin only writes last-good after a **real user conversation** — a host that settles but red-screens, or a boot nobody talked to, is never snapshotted. Confirm `dsh-qaq` is in the profile bundles (the dashboard shows the last snapshot) and that `install-plugin` reported success |
+### 故障排查
 
-### Data locations
+| 现象                             | 处理方法                                                                                                                                             |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `启动前自检未通过`（找不到 dsh） | 把 `dsh` 加进 `PATH`、设置 `QAQ_DSH_CMD`，或用 `--cwd <dir>` 指向 DSH 源码目录                                                                       |
+| `端口已被占用`                   | 停掉占用进程，或用 `--port N` 换端口                                                                                                                 |
+| 回滚后 UI 仍然红屏               | 看日志与保留的坏配置：`qaq tui`（仪表盘内直接看日志），或直接读 `~/.dsh/.qaq/log/`（`error.log` / `access.log` / `host.log`）                        |
+| 提示 `anti-loop fence is active` | 5 分钟内已发生过回滚。先手动修复配置（见 `rolled-back/`），再 `qaq reset --profile web` 清计数                                                       |
+| 想撤销一次回滚                   | `qaq restore --to <snapDir> --profile web`，`snapDir` 用 `~/.dsh/.qaq/history/auto/`（或 `history/manual/`、`rolled-back/`）下任意目录                                       |
+| dsh-qaq 不写快照                 | 插件只在**真实用户对话发生后**写 last-good——宿主 settle 但 UI 红屏、或一直无人对话都不写。确认 profile 已含 `dsh-qaq` bundle（`qaq console` → **[2]** 能看到最近快照）且 `install-plugin` 报成功 |
 
-- Guard state, snapshots, and logs: `~/.dsh/.qaq/` (or `$DSH_HOME/.qaq/`)
-- Profile configs: `$DSH_HOME/profiles/<name>/` (`package.json` + `cordis.patch.yml`)
-- `qaq status` prints the exact paths for your environment.
+### 数据位置
 
-## Supervised `dsh web` options
+- 守卫状态、快照、日志：`~/.dsh/.qaq/`（或 `$DSH_HOME/.qaq/`）
+- profile 配置：`$DSH_HOME/profiles/<name>/`（`package.json` + `cordis.patch.yml`）
+- `qaq status` 会打印你环境下的确切路径。
 
-| Option              | Meaning                                                                            | Default     |
-| ------------------- | ---------------------------------------------------------------------------------- | ----------- |
-| `--confirm-ms <ms>` | stable-healthy confirmation window before snapshotting                             | `20000`     |
-| `--ui-timeout <ms>` | max wait for the UI to settle during the L3 probe                                  | `25000`     |
-| `--threshold <n>`   | consecutive same-kind failures that trigger a rollback                             | `3`         |
-| `--cwd <dir>`       | working directory for the supervised `dsh` (set to the checkout for source launch) | process cwd |
+## `qaq dsh web` 调优参数
 
-## Detection criteria (L3, empirically verified)
+| 参数                | 含义                                                   | 默认       |
+| ------------------- | ------------------------------------------------------ | ---------- |
+| `--confirm-ms <ms>` | 稳定健康确认窗口（成功判定前的观察时长）               | `20000`    |
+| `--ui-timeout <ms>` | L3 UI 侦测最长等待                                     | `25000`    |
+| `--threshold <n>`   | 触发回滚的连续同类失败数                               | `3`        |
+| `--cwd <dir>`       | 被监督 `dsh` 的工作目录（源码启动时指向 DSH checkout） | 本进程 cwd |
 
-- **UI failure**: `document.body.innerText` contains the pinned text `Failed to load plugins` (stable across builds). The failure detail even names the missing plugin/service (e.g. `web boot: 1 entry did not activate dsh-x: pending (waiting for service: s)`).
-- **Success**: a composer business container (`<textarea>`) is present and the failure marker is absent, stable for >= `--confirm-ms`.
-- **No CSS class selectors**: the red-screen structural classes are CSS-Module hashes (`_boot_<hash>`) that change between builds.
+## 侦测判据（L3，实证）
 
-## State & storage (`~/.dsh/.qaq/`)
+- **UI 失败**：`document.body.innerText` 含固定文本 `Failed to load plugins`（跨构建稳定）；异常详情直接给出缺失插件/服务（如 `web boot: 1 entry did not activate dsh-x: pending (waiting for service: s)`）。
+- **成功**：出现 composer 业务容器（`<textarea>`）且无红屏文本，稳定 >= `--confirm-ms`。
+- **不使用 CSS 类选择器**：红屏结构类是 CSS Modules 哈希（`_boot_<hash>`），跨构建不稳定。
 
-- `state.json` — `hostFailures`, `uiFailures`, `lastSuccess`, `lastFailure`, `lastGoodSnapshot`, `rolledBackAt`
-- `latest-good/` — the last confirmed-good profile config (`package.json` + `cordis.patch.yml` + `manifest.json`)
-- `history/auto/<ts>/` — auto backup set (guard confirm / plugin real conversation; independent 10-snapshot quota)
-- `history/manual/<ts>/` — manual backup set (`qaq backup` / TUI `[3]`; independent 3-snapshot quota)
-- `rolled-back/<ts>/` — the broken config saved before a rollback (for manual recovery)
-- `log/` — structured multi-file logs (see below)
+## 状态与存储（`~/.dsh/.qaq/`）
 
-**Never snapshotted**: credentials, sessions, storages, mcp-servers.
+- `state.json` — `hostFailures` / `uiFailures` / `lastSuccess` / `lastFailure` / `lastGoodSnapshot` / `rolledBackAt`
+- `latest-good/` — 当前「确认成功」的 profile 配置副本（package.json + cordis.patch.yml + manifest）
+- `history/auto/<ts>/` — 自动备份集（守卫确认健康 / 插件真实对话后写入，独立保留 10 份）
+- `history/manual/<ts>/` — 手动备份集（`qaq backup` / TUI `[3]` 写入，独立保留 3 份）
+- `rolled-back/<ts>/` — 被执行回滚的坏配置（手动还原用）
+- `log/` — 结构化多文件日志（见下）
 
-## Logging (for developer troubleshooting)
+**绝不纳入快照**：凭据、会话、storages、mcp-servers。
 
-Every record is one JSON line (`{ ts, level, cat, phase?, msg, ...meta }`) so the trail is machine-parseable, split across four files under `log/`, each rotating by size (256 KB → `.1.log`, keeping 5 copies):
+## 日志（供开发者检修）
 
-| File         | Content                                                                                       |
-| ------------ | --------------------------------------------------------------------------------------------- |
-| `qaq.log`    | everything (info + warn + error), the canonical record                                        |
-| `error.log`  | warn/error only — grep for trouble fast                                                       |
-| `access.log` | crash-audit trail: boot verdicts, snapshots, rollbacks, resets, plugin mounts, manual restore |
-| `host.log`   | raw supervised `dsh` stdout/stderr (mirrored to the visible window)                           |
+每条记录一行 JSON（`{ ts, level, cat, phase?, msg, ...meta }`），可机器解析；按 `log/` 下四个文件分门别类，各自按大小轮转（256 KB → `.1.log`，保留 5 份）：
 
-## Trigger & anti-loop
+| 文件         | 内容                                                         |
+| ------------ | ------------------------------------------------------------ |
+| `qaq.log`    | 全部（info + warn + error），主记录                          |
+| `error.log`  | 仅 warn/error——快速 grep 问题                                |
+| `access.log` | 崩溃审计轨迹：启动结论、快照、回滚、重置、插件挂载、手动还原 |
+| `host.log`   | 被监督 `dsh` 的原始 stdout/stderr（同时镜像到可见窗口）      |
 
-- **3** consecutive failures of the same kind (host or UI) trigger a rollback.
-- **Exception — definitive host crash**: when the child process dies *and* its output carries a fail-loud boot marker (`plugin tree failed to load` etc.), it is a deterministic config error: QAQ rolls back on the **first** hit (effective threshold 1) instead of waiting for 3 manual runs. The anti-loop fence and the Y/N confirmation (unless `--yes`) still apply.
-- Confirmation is required by default (`Y/N`); `--yes` makes it fully automatic.
-- **Declining the confirmation stops the guard without auto-restart**: the broken config is left in place (preserved under `rolled-back/` too) for manual recovery — the guard never restarts with an auto-confirmed rollback behind your back.
-- After a rollback a **5-minute anti-loop fence** stops repeated auto-restarts if the restart still fails; the user is pointed at `rolled-back/`.
+## 触发与防死循环
 
-## Reliability features
+- 连续 **3** 次同类（host 或 ui）失败 -> 触发回滚。
+- **例外——确定性宿主崩溃**：子进程死亡且输出带启动失败标记（`plugin tree failed to load` 等）属于确定的配置错误，**首次命中即回滚**（有效阈值 1，不再等 3 次），无需重复手动启动。防死循环栅栏与 Y/N 确认（除非 `--yes`）仍然生效。
+- 默认需用户在窗口确认（Y/N）；`--yes` 全自动。
+- **拒绝确认即停手，不自动重启**：坏配置保留原位（同时备份到 `rolled-back/`）供手动还原——守卫绝不会在你背后用 autoConfirm 重启来强行回滚。
+- 回滚后进入 **5 分钟防死循环栅栏**：窗口内再次失败即停手，指引人工检查 `rolled-back/`。
 
-- **Transient-failure retry** (`retries=1`): suspected one-off flakes (host not ready, a client bundle that transiently fails to load) are retried once and not counted, so a Windows EBUSY does not corrupt the strike counter. A **definitive host crash** (death + fail-loud marker) is not retried — a retry only reproduces the same deterministic error — and it rolls back on the first hit. Every retried attempt kills its child first, so a failed boot never leaks a process that would hold the port or hang the guard.
-- **Confirmation-window re-probe**: after the first healthy DOM probe, the boot must stay stable for `--confirm-ms`, then the real DOM is probed once more before a last-good snapshot is written — a boot that degrades right after first health is never recorded as good.
-- **PID-aware guard lock**: a stale lock left by a crashed guard is auto-reclaimed on the next run.
-- **Rollback diff preview**: prints the config diff (current vs. last-good) before `Y/N`.
-- **Deterministic history retention**: snapshots sort by their ISO-timestamp names, stable across restarts.
-- **Fast host-failure reporting**: a child that exits before its port opens (or a spawn failure such as a missing command) is reported immediately instead of waiting out the full port timeout.
+## 可靠性增强
 
-## What the guard catches — and what it cannot
+- **瞬态失败重试**（`retries=1`）：对疑似瞬时错误（host 未就绪 / bundle 脚本加载失败）自动重试一次，不计入失败计数，避免 Windows 偶发 EBUSY 误伤。**带失败标记的确定性宿主崩溃不重试**（重试只会复现同样的错误），直接计数并首次即回滚。每次重试前会先杀掉上一次的子进程——失败启动绝不会泄漏进程占住端口或挂住守卫。
+- **确认窗口复查**：首次健康 DOM 探测后，启动需稳定经过 `--confirm-ms`，随后再对真实 DOM 复查一次才写 last-good 快照——首次健康后立即劣化的启动绝不会被记为 good。
+- **PID 感知守卫锁**：崩溃残留的陈旧锁在下一次运行自动回收，避免「假占用」。
+- **回滚 diff 预览**：Y/N 确认前打印当前配置与 last-good 的差异。
+- **历史保留确定性**：快照按 ISO 时间戳名排序，跨重启保留稳定。
+- **宿主失败快速上报**：子进程在端口打开前退出（或 spawn 失败，如命令不存在）会立即上报，不再干等完整端口超时。
 
-**Guarded (by code fact):**
+## 守卫能力与边界
 
-| Category | Mechanism |
+**能守卫的（按代码事实）：**
+
+| 类别 | 机制 |
 |---|---|
-| Boot failure (host) | port never ready / early exit / fail-loud markers (`plugin tree failed to load` …) → deterministic errors **roll back on first hit** |
-| UI red screen | pinned text `Failed to load plugins`; deterministic red screens (`did not activate … waiting for service`) roll back on first hit |
-| Runtime degradation | confirmation-window re-probe + sideload re-probing the real DOM every ~15s |
-| Environment/dependency failures | output containing `EPERM` / `ERR_MODULE_NOT_FOUND` / `unsupported engine` … → classified `env`, **never counted, never rolled back** (a rollback cannot fix it); the operator is pointed at the DSH install / Node version / permissions |
-| Corrupt snapshots | snapshots are validated before restore (parseable JSON, sane `bundles`, non-empty patch) — a corrupt snapshot is never restored; a corrupt state pointer falls back to the **newest valid** auto snapshot |
-| Non-red-screen degradation | enabled plugins in a FAILED Cordis fiber (from the dsh-qaq inventory) or console errors sampled during the probe → warn + `ui-degraded` event (advisory, never scored) |
+| 启动失败（host） | 端口未就绪 / 进程早退 / fail-loud 标记（`plugin tree failed to load` 等）→ 确定性错误**首次即回滚** |
+| UI 红屏 | 固定文本 `Failed to load plugins`；确定性红屏（`did not activate … waiting for service`）首次即回滚 |
+| 运行中劣化 | 确认窗口复查 + 侧载每 15s 重探测真实 DOM |
+| 环境/依赖类失败 | 输出含 `EPERM` / `ERR_MODULE_NOT_FOUND` / `unsupported engine` 等 → 归为 `env`，**不计数、不回滚**（回滚无效），提示检查 DSH 安装 / Node 版本 / 权限 |
+| 快照损坏 | 回滚前校验快照（JSON 可解析、`bundles` 结构合法、patch 非空）——坏快照绝不还原；状态指针损坏时自动回退到**最新合法**自动快照 |
+| 非红屏劣化信号 | 已启用插件 fiber 落入 `failed` 态（dsh-qaq 清单）或探测期捕获 console error → 告警 + `ui-degraded` 事件（**不计分**，避免误杀次要插件） |
 
-**Still outside the guard (design blind spots, manual):**
+**仍无法守卫的（设计盲区，需人工）：**
 
-- **Semantic damage without a red screen** — a healthy-looking page whose logic is broken (dead buttons, wrong results): neither DOM nor fiber signals see semantics.
-- **Unresponsive/frozen UI** — probe timeout reports `unknown` and is **not counted** (slow load vs. true hang is indistinguishable; better to under-report).
-- **Non-configuration root causes** — DSH bugs, corrupted dependencies, full disk: detected and retried, but a rollback cannot fix them (the `env` class is already surfaced separately).
-- **Electron/desktop carriers** — the UI probe targets the `dsh web` HTTP page.
-- **The user's own browser environment** — the guard probes with its own headless Chrome; user-browser cache/extension issues are invisible.
-- **Sideload discovery depends on the heartbeat** — `qaq watch` finds its target via the dsh-qaq heartbeat; without the plugin there is nothing to discover.
+- **非红屏语义损坏**：页面渲染健康但功能逻辑损坏（按钮无响应、运算错误）——DOM 探测与 fiber 信号都看不到语义。
+- **UI 卡死无响应**：探测超时归 `unknown`，**不计数**（慢加载与真卡死难以区分，宁可漏报）。
+- **非配置根源**：DSH 自身 bug、依赖损坏、磁盘满等——能检测会重试，但回滚无效（`env` 类已单独分类提示）。
+- **Electron/桌面载体**：守卫的 UI 探测针对 `dsh web` 的 HTTP 页面。
+- **用户浏览器独有环境**：守卫用自己的 headless Chrome 探测，用户浏览器缓存/扩展问题不可见。
+- **侧载发现依赖心跳**：`qaq watch` 靠 dsh-qaq 心跳发现目标端口，插件未装则发现不了。
 
-## Testing
+## 测试
 
 ```bash
-pnpm test      # vitest unit tests (store / paths / cli / dsh-context / rollback / detector-ui / guard / spawn-dsh / env / install-plugin / tui / watch / webhook / cdp / log / i18n / …)
-pnpm smoke     # one-shot regression: unit tests + seed/broken/detect in an isolated home
+pnpm test      # vitest 单元测试（store / paths / cli / dsh-context / rollback / detector-ui / guard / spawn-dsh / env / install-plugin / tui / watch / webhook / cdp / log / i18n / …）
+pnpm smoke     # 一键回归：单测 + 隔离 home 种子/破坏/守卫检测
 ```
 
-`pnpm smoke` performs a real-DSH integration segment only when a checkout is available (set `QAQ_SMOKE_DSH_HOME`).
+`pnpm smoke` 在可用 DSH checkout（`QAQ_SMOKE_DSH_HOME`）时才会执行真实 DSH 集成段。
 
-CI (`.github/workflows/ci.yml`) runs typecheck + build + plugin-lib consistency + unit tests + smoke on **ubuntu-latest** and **windows-latest** × **Node 22 / 24** with a frozen lockfile.
+CI（`.github/workflows/ci.yml`）在 **ubuntu-latest** 与 **windows-latest** × **Node 22 / 24**、冻结 lockfile 下运行 typecheck + 风格检查 + 构建 + 插件 lib 一致性 + 单测 + smoke。
 
-Integration fixture: `qaq-test-plugins/dsh-broken-theme` (injects a service that never arrives -> deterministic red screen), used with `tools/rollback-test.ps1` to exercise the full fail->count->rollback->recover loop on a real DSH instance.
+集成验收素材：`qaq-test-plugins/dsh-broken-theme`（注入永不存在的服务 -> 确定性红屏），配合 `tools/rollback-test.ps1` 可在真实 DSH 实例上跑通「失败 -> 计数 -> 回滚 -> 还原」闭环。
 
-## Repository layout
+## 仓库布局
 
-| Path                          | Purpose                                                                                                          |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `src/cli.ts`                  | command surface + supervised loop                                                                                |
-| `src/guard.ts`                | superviseBoot orchestration (host ready -> UI detect -> count/rollback)                                          |
-| `src/spawn-dsh.ts`            | spawn dsh web, inherit env, readiness/exit tracking                                                              |
-| `src/cdp.ts`                  | minimal CDP client (headless Chrome, no Playwright)                                                              |
-| `src/detector-ui.ts`          | L3 text criteria                                                                                                 |
-| `src/store.ts`                | atomic `~/.dsh/.qaq` read/write + snapshot management + lock                                                     |
-| `src/rollback.ts`             | rollback + broken-config backup + anti-loop + success bookkeeping                                                |
-| `src/env.ts`                  | auto-discovery + pre-launch self-check (dsh / browser / port)                                                    |
-| `src/console.ts`              | interactive menu GUI (lazy launcher, CMD window)                                                                 |
-| `src/install-plugin.ts`       | auto-mount the dsh-qaq backup plugin (rollback-safe)                                                             |
-| `src/plugin-manager.ts`       | filesystem-scoped plugin lifecycle for the REAL DeepSeek Harness: install / uninstall / enable / disable of DSH bundle packages in a DSH profile |
-| `src/dsh-context.ts`          | resolves the real DSH installation (home + checkout + running-process status via the plugin heartbeat) that the plugin manager and TUI operate on |
-| `src/paths.ts` · `src/log.ts` | path helpers; structured multi-file rotating logger                                                              |
-| `src/shared-io.ts`           | plugin↔CLI channel: heartbeat / health state / `events.jsonl`                                                     |
-| `src/watch.ts`               | `qaq watch`: attach a guard to a DSH launched by anyone (discover via plugin heartbeat) — powers the TUI sideload mode |
-| `src/webhook.ts`             | dependency-free POSTs for boot-failure / rollback notifications                                                   |
-| `packages/dsh-qaq/`           | DSH backup plugin (snapshots after settle + heartbeat; backup-only; `lib/` generated by `pnpm build`)            |
-| `bin/`                        | `qaq.cmd` + `qaq.mjs` — the single universal CLI entry (`qaq setup` / `qaq tui` / `qaq dsh web` …) |
-| `tools/` · `test/`            | integration/smoke scripts; vitest specs                                                                          |
+| 路径                          | 作用                                                                                    |
+| ----------------------------- | --------------------------------------------------------------------------------------- |
+| `src/cli.ts`                  | 命令面 + 接管循环                                                                       |
+| `src/guard.ts`                | superviseBoot 编排（host 就绪 -> UI 侦测 -> 计数/回滚）                                 |
+| `src/spawn-dsh.ts`            | spawn dsh web、继承 env、就绪/退出监听                                                  |
+| `src/cdp.ts`                  | 极简 CDP 客户端（headless Chrome，无 Playwright）                                       |
+| `src/detector-ui.ts`          | L3 文本判据                                                                             |
+| `src/store.ts`                | `~/.dsh/.qaq` 原子读写 + 快照管理 + 锁                                                  |
+| `src/rollback.ts`             | 回滚 + 坏版备份 + 防死循环 + 成功记账                                                   |
+| `src/env.ts`                  | 环境自动发现 + 启动前自检（dsh / 浏览器 / 端口）                                        |
+| `src/console.ts`              | 交互式菜单 GUI（懒人脚本，CMD 窗口）                                                    |
+| `src/install-plugin.ts`       | 自动挂载 dsh-qaq 备份插件（失败即撤销，绝不弄坏启动）                                   |
+| `src/paths.ts` · `src/log.ts` | 路径助手；结构化多文件轮转日志                                                          |
+| `src/shared-io.ts`            | 插件↔CLI 通道：心跳 / 健康状态 / `events.jsonl`                                         |
+| `src/watch.ts`                | `qaq watch`：为任何方式启动的 DSH 附设守卫（按插件心跳发现）                            |
+| `src/webhook.ts`              | 无依赖的启动失败 / 回滚事件 POST 通知                                                   |
+| `packages/dsh-qaq/`           | DSH 备份插件（真实对话后写自动备份 + 心跳；仅备份；`lib/` 由 `pnpm build` 生成）             |
+| `bin/`                        | `qaq.cmd` + `qaq.mjs` —— 唯一通用 CLI 入口（`qaq setup` / `qaq tui` / `qaq dsh web` …） |
+| `tools/` · `test/`            | 集成/smoke 脚本；vitest 测试                                                            |
 
-## Documentation
+## 文档
 
-Developer-oriented deep-dives for secondary development:
+面向二次开发的专项解析文档：
 
-| Document                                            | Covers                                                                             |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| [architecture.md](docs/architecture.md)             | module map, boot sequence, state machine, data flow                                |
-| [guard-lifecycle.md](docs/guard-lifecycle.md)       | supervised boot flow, failure classification, transient retry, confirmation window |
-| [state-and-rollback.md](docs/state-and-rollback.md) | state.json, snapshots, anti-loop fence, guard lock                                 |
-| [ui-detection.md](docs/ui-detection.md)             | headless-Chrome CDP client, L3 text criteria, probe timing                         |
-| [console-and-env.md](docs/console-and-env.md)       | lazy launcher console, environment auto-discovery, plugin mounting                 |
-| [logging.md](docs/logging.md)                       | structured log format, four channels, rotation                                     |
-| [testing.md](docs/testing.md) | unit-test matrix, smoke, real-DSH integration, fault injection |
+| 文档                                                      | 内容                                             |
+| --------------------------------------------------------- | ------------------------------------------------ |
+| [architecture.zh.md](docs/architecture.zh.md)             | 架构总览：模块地图、启动时序、状态机、数据流     |
+| [guard-lifecycle.zh.md](docs/guard-lifecycle.zh.md)       | 守卫生命周期：失败分类、瞬态重试、确认窗口       |
+| [state-and-rollback.zh.md](docs/state-and-rollback.zh.md) | 状态存储与回滚：state.json、快照、防循环、守卫锁 |
+| [ui-detection.zh.md](docs/ui-detection.zh.md)             | UI 检测与 CDP：无依赖客户端、L3 判据、探测时序   |
+| [console-and-env.zh.md](docs/console-and-env.zh.md)       | 懒人脚本控制台与环境自动发现、插件挂载           |
+| [logging.zh.md](docs/logging.zh.md)                       | 日志系统：结构化格式、四通道、轮转               |
+| [testing.zh.md](docs/testing.zh.md)                       | 测试与真实集成：单测矩阵、smoke、故障注入        |
 
-> Chinese versions: `docs/*.zh.md` (default-named files are English).
+> 英文版见 `docs/*.md`（默认命名）。
 
-## Contributing
+变更日志：[Changelog.zh.md](Changelog.zh.md)（英文版 [Changelog.md](Changelog.md)）——按 git 历史梳理，覆盖「新增 / 修复 / 变更 / 移除」。
 
-Contributions are welcome — bug reports, feature requests, and pull requests all help make QAQ better.
+## 参与贡献
 
-**Report a bug / request a feature**: open an [issue](https://github.com/WTStarMark/QAQ/issues) with reproduction steps (excerpts from `~/.dsh/.qaq/log/access.log` and `error.log` go a long way) and your environment (OS, Node version).
+欢迎一切形式的贡献——Bug 报告、功能建议与 Pull Request 都能让 QAQ 变得更好。
 
-**Send a pull request**:
+**报 Bug / 提需求**：在 [Issues](https://github.com/WTStarMark/QAQ/issues) 提交，附上复现步骤（`~/.dsh/.qaq/log/access.log` 与 `error.log` 的关键片段最有帮助）和你的环境（操作系统、Node 版本）。
 
-1. Fork the repository and create a feature branch.
-2. Set up locally: `pnpm install` (Node 22+, pnpm 11 — see `.nvmrc`).
-3. Make your change **with tests** — [testing.md](docs/testing.md) explains what each spec covers and how to add cases.
-4. Run the gates: `pnpm typecheck` && `pnpm test` && `pnpm build` (CI enforces these on Ubuntu + Windows).
-5. Open the PR with a short description of what changed and why.
+**提交 Pull Request**：
 
-Orientation: start with [architecture.md](docs/architecture.md), then the topic documents under `docs/`.
+1. Fork 本仓库并创建功能分支。
+2. 本地准备：`pnpm install`（Node 22+、pnpm 11——见 `.nvmrc`）。
+3. 修改并**补测试**——见 [testing.zh.md](docs/testing.zh.md) 了解各 spec 覆盖点与新增用例的方式。
+4. 通过门禁：`pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm build`（CI 会在 Ubuntu 与 Windows 上强制执行）。
+5. 开 PR，附上简短说明：改了什么、为什么。
+
+入门指引：先读 [architecture.zh.md](docs/architecture.zh.md)，再深入 `docs/` 下各专项文档。
 
 ## License
 

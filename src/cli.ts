@@ -25,7 +25,7 @@ import { makeT, resolveLang, type Lang } from './i18n.ts'
 import { runSetup } from './setup.ts'
 
 interface CliArgs {
-mode: 'dsh' | 'watch' | 'status' | 'backup' | 'restore' | 'reset' | 'console' | 'install-plugin' | 'setup' | 'help'
+  mode: 'dsh' | 'watch' | 'status' | 'backup' | 'restore' | 'reset' | 'console' | 'install-plugin' | 'setup' | 'help'
   profile: string
   port?: number
   yes: boolean

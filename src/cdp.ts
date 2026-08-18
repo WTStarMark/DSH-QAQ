@@ -8,8 +8,17 @@ import { mkdtempSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-/** Locate a Chrome/Edge binary on this host (Windows + POSIX candidates). */
+/**
+ * Locate a Chrome/Edge binary on this host (Windows + POSIX candidates).
+ * Resolution order: an explicit `QAQ_CHROME` or `CHROME_PATH` env override
+ * (must point at an existing binary) → the well-known install paths below →
+ * a scan of `$PATH` for a chrome/chromium/msedge/brave executable.
+ */
 export function findBrowser(): string | null {
+  for (const v of ['QAQ_CHROME', 'CHROME_PATH']) {
+    const p = process.env[v]
+    if (p && existsSync(p)) return p
+  }
   const candidates = [
     process.env.PROGRAMFILES && join(process.env.PROGRAMFILES, 'Google/Chrome/Application/chrome.exe'),
     process.env['PROGRAMFILES(X86)'] && join(process.env['PROGRAMFILES(X86)'], 'Google/Chrome/Application/chrome.exe'),
@@ -28,6 +37,20 @@ export function findBrowser(): string | null {
     '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
   ] as (string | undefined)[]
   for (const c of candidates) { if (c && existsSync(c)) return c }
+  // Last resort: scan PATH for a browser executable (covers custom installs,
+  // dev builds, and package-managed binaries like the ms-playwright cache).
+  const sep = process.platform === 'win32' ? ';' : ':'
+  const names = process.platform === 'win32'
+    ? ['chrome.exe', 'msedge.exe', 'chromium.exe', 'brave.exe']
+    : ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'microsoft-edge', 'microsoft-edge-stable', 'brave-browser']
+  for (const chunk of (process.env.PATH ?? '').split(sep)) {
+    const dir = chunk.replace(/^"+|"+$/g, '')
+    if (!dir) continue
+    for (const n of names) {
+      const full = join(dir, n)
+      if (existsSync(full)) return full
+    }
+  }
   return null
 }
 

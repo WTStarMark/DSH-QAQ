@@ -1,0 +1,19 @@
+# EditorConfig — editor-level formatting baseline for QAQ.
+# https://editorconfig.org — zero-dependency; enforced by most editors.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Markdown: trailing two-space line breaks are a valid hard-break syntax.
+[*.md]
+trim_trailing_whitespace = false
+
+# Windows batch shims stay CRLF (matches .gitattributes).
+[*.cmd]
+end_of_line = crlf

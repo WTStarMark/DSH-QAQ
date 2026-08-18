@@ -1,12 +1,12 @@
 /**
  * Minimal in-process i18n for the guard's user-facing surface (console UI,
  * pre-launch preflight text, install-plugin results). Two locales — `en` and
- * `zh`. The launchers pin the locale: `bin\qaq-web.cmd` forces `en`,
- * `bin\qaq-web.zh.cmd` forces `zh`; a bare `qaq ...` defaults to `zh` (the
- * original behavior) unless `--lang en` or `$QAQ_LANG=en` says otherwise.
+ * `zh`. The default is `zh` (the original behavior) unless `--lang en` or
+ * `$QAQ_LANG=en` says otherwise.
  *
  * Keys are dot-namespaced by area (console.*, env.*, cli.*, plugin.*). Values
- * support `{name}`-style interpolation.
+ * support `{name}`-style interpolation. `en` and `zh` must stay key-for-key in
+ * sync — test/i18n.spec.ts asserts the two dictionaries have identical keys.
  */
 export type Lang = 'en' | 'zh'
 
@@ -26,7 +26,8 @@ export function resolveLang(argv: string[], env: Record<string, string | undefin
 
 export type T = (key: string, vars?: Record<string, string | number>) => string
 
-const en: Record<string, string> = {
+/** English strings. Exported so tests can assert key parity with `zh`. */
+export const en: Record<string, string> = {
   // console.ts — header / menu
   'console.header.title': 'QAQ - DeepSeek Harness Launch Resilience Guard',
   'console.menu.title': 'Main menu',
@@ -265,7 +266,8 @@ const en: Record<string, string> = {
   'tui.dsh.conn.disconnected': 'dsh-qaq disconnected',
 }
 
-const zh: Record<string, string> = {
+/** 简体中文文案。导出以便测试断言与 `en` 的 key 完全一致。 */
+export const zh: Record<string, string> = {
   // console.ts — header / menu
   'console.header.title': 'QAQ — DeepSeek Harness 启动容灾守卫控制台',
   'console.menu.title': '主菜单',

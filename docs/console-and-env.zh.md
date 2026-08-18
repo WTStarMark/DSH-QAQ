@@ -21,7 +21,7 @@
 
 1. **祖先链**：从 `process.cwd()` 向上最多 5 级，检查 `apps/cli/src/bin.ts` / `index.ts` / `dist/index.js`。
 2. **兄弟目录**（懒人脚本场景关键）：扫描 cwd 父目录下的**所有直接子目录**，任一含 `apps/cli` 即命中——
-   覆盖"QAQ 与 deepseek-harness 并排"的典型布局（双击 `qaq-web.cmd` 后 cwd 在 QAQ，checkout 在兄弟目录）。
+   覆盖"QAQ 与 deepseek-harness 并排"的典型布局（从 QAQ 目录内启动 CLI，checkout 在兄弟目录）。
 
 > PATH 分隔符按平台选择：Windows `;`，POSIX `:`（驱动器盘符 `C:\` 不能用 `/[;:]/` 一刀切）。
 
@@ -105,18 +105,16 @@ reject）同样不写快照（`.catch(() => {})`）。
 
 ---
 
-## 4. `.cmd` 启动器（bin/）
+## 4. CLI 入口（bin/）
 
 | 文件 | 作用 |
 |------|------|
-| `qaq-install.cmd` | 懒人一键安装：查 Node ≥22 → pnpm 装依赖（回退 npx）→ esbuild 构建 dist → 校验产物 |
-| `qaq-web.cmd` | 双击打开懒人脚本控制台：查 node_modules → `node --import tsx/esm src\cli.ts console` |
-| `qaq.cmd` | 透传命令行（`qaq <args>`） |
-| `qaq.mjs` | Node 入口：有 dist 用 dist，否则 tsx 跑源码（`import.meta.url` 相对定位） |
+| `qaq.cmd` | Windows 透传包装（`qaq <args>`）：`cd` 到仓库根后 `node --import tsx/esm src\cli.ts %*`（开发模式直跑 TS 源码） |
+| `qaq.mjs` | Node 入口（`bin` 字段）：有 `dist/qaq.mjs` 用 dist，否则 tsx 跑源码（`import.meta.url` 相对定位） |
 
-**编码红线**：`.cmd` 文件必须是 **GBK(CP936) + CRLF**（中文 Windows cmd 按 ANSI 解析批处理）。
-用 UTF-8 保存会让中文 banner 乱码且乱码片段被 cmd 当命令执行。改这些文件务必用 PowerShell
-以 `Encoding.GetEncoding(936)` 读写，或用 `%~dp0` 相对定位，绝不写绝对路径。
+**编码说明**：仓库已无 GBK 批处理文件——`qaq.cmd` 为纯 ASCII，按 UTF-8/LF 维护即可。
+一键安装/构建入口统一走 CLI 命令 `qaq setup`（`src/setup.ts`），它强制 pnpm >= 11
+（本地 pnpm 缺失或过老时回退 `npx pnpm@11`——见 `pnpm-workspace.yaml` 的 `allowBuilds` 键）。
 
 ---
 

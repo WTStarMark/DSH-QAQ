@@ -64,29 +64,46 @@ export function ensureQaqDir(home: string): string {
 function lockPath(home: string): string { return join(qaqDir(home), '.guard.lock') }
 
 /**
- * Acquire the guard lock (exclusive). A lock whose recorded PID is not alive is
- * treated as stale and reclaimed, so a crashed guard does not permanently block
- * the next run.
+ * Acquire the guard lock (exclusive). The lock file is created with the
+ * O_EXCL (`wx`) flag, so two racing guard instances can never both win the
+ * create — the loser gets EEXIST and must re-read the winner's PID. A lock
+ * whose recorded PID is not alive is treated as stale and reclaimed (with the
+ * same atomic create after removal, so concurrent reclaimers still serialize).
  * @returns a release function.
  * @throws if another live guard instance holds the lock.
  */
 export function acquireLock(home: string): () => void {
   const lp = lockPath(home)
-  try {
-    if (existsSync(lp)) {
+  const tryCreate = (): boolean => {
+    try {
+      writeFileSync(lp, String(process.pid), { encoding: 'utf8', flag: 'wx' })
+      return true
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false
+      throw err
+    }
+  }
+  if (tryCreate()) return () => { try { rmSync(lp, { force: true }) } catch { /* best effort */ } }
+
+  // A lock file already exists: either a live guard or a stale/corrupt
+  // remnant. Re-read it and check liveness; reclaim stale ones and retry the
+  // atomic create once (a concurrent reclaimer may have won — then it is a
+  // live holder and we report it, never clobbering its lock).
+  const stale = ((): boolean => {
+    try {
       const raw = readFileSync(lp, 'utf8')
       const pid = Number(raw.trim())
-      if (Number.isFinite(pid) && pid > 0 && isProcessAlive(pid)) {
-        throw new Error('another qaq guard instance (pid ' + pid + ') is already running; stop it, or remove ' + lp)
-      }
-      // stale lock: owner pid is not alive — reclaim.
-      try { rmSync(lp, { force: true }) } catch { /* best effort */ }
-    }
-  } catch (err) {
-    if (err instanceof Error && /another qaq guard/.test(err.message)) throw err
+      if (Number.isFinite(pid) && pid > 0 && isProcessAlive(pid)) return false
+      return true
+    } catch { return true } // unreadable lock => treat as stale
+  })()
+  if (!stale) {
+    const holder = ((): string => { try { return readFileSync(lp, 'utf8').trim() } catch { return '?' } })()
+    throw new Error('another qaq guard instance (pid ' + holder + ') is already running; stop it, or remove ' + lp)
   }
-  writeFileSync(lp, String(process.pid), 'utf8')
-  return () => { try { rmSync(lp, { force: true }) } catch { /* best effort */ } }
+  try { rmSync(lp, { force: true }) } catch { /* best effort */ }
+  if (tryCreate()) return () => { try { rmSync(lp, { force: true }) } catch { /* best effort */ } }
+  throw new Error('another qaq guard instance is already running; stop it, or remove ' + lp)
 }
 
 /** Best-effort liveness check for a pid (Windows + POSIX). */

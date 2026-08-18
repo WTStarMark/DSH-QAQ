@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { resolveLang, makeT, isLang } from '../src/i18n.ts'
+import { resolveLang, makeT, isLang, en, zh } from '../src/i18n.ts'
 
 describe('i18n', () => {
+  it('keeps the en and zh dictionaries key-for-key in sync (no missing/extra translations)', () => {
+    expect(Object.keys(zh).sort()).toEqual(Object.keys(en).sort())
+  })
+
   it('defaults to zh without flags or env', () => {
     expect(resolveLang([], {})).toBe('zh')
   })

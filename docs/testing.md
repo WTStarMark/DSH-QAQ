@@ -9,8 +9,9 @@ Related: [Architecture Overview](architecture.md)
 ## 1. Test commands
 
 ```bash
-pnpm test      # vitest run — 21 spec files
+pnpm test      # vitest run — 26 spec files
 pnpm smoke     # one-shot regression: unit tests + seed/broken/detect in an isolated home
+pnpm lint      # dependency-free style gate (trailing whitespace, tabs, TODO markers, final newline)
 pnpm typecheck # tsc --noEmit (root src/+test/) AND packages/dsh-qaq via its own tsconfig
 pnpm build      # bundle dist/qaq.mjs AND regenerate packages/dsh-qaq/lib
 ```
@@ -35,7 +36,7 @@ pnpm build      # bundle dist/qaq.mjs AND regenerate packages/dsh-qaq/lib
 | `guard.spec.ts` | orchestration (mocked spawn/detect) | an un-settled UI must kill the child (leak regression); a degraded confirmation is never recorded as last-good; **a host crashing after binding is host, not unknown (classification regression)**; retriesExhausted semantics; **deterministic UI red screen rolls back on first hit (effective threshold 1)** |
 | `spawn-dsh.spec.ts` | real child readiness tracking | an early exit before the port opens rejects `ready` immediately with the real code; a missing command rejects without waiting out the timeout |
 | `detector-ui.spec.ts` | L3 criteria | red-screen text → failed with detail/failedEntries; healthy composer → ok; boot page → loading; **0ms timeout still probes at least once (confirm-ms 0 regression)**; **"waiting for service" red screen → definitive** |
-| `env.spec.ts` | environment discovery | findCheckoutCli / QAQ_DSH_CMD / --cwd checkout / **sibling auto-discovery (qaq-web.cmd layout)** / isPortFree |
+| `env.spec.ts` | environment discovery | findCheckoutCli / QAQ_DSH_CMD / --cwd checkout / **sibling auto-discovery (checkout beside the cwd)** / isPortFree |
 | `install-plugin.spec.ts` | plugin mounting | graceful failure on an uninitialized profile; real mount is idempotent + **user patch untouched**; plugin-dir resolution; **stale-insert warning; failed-link undoes the manifest write; bad-JSON profile** |
 | `log.spec.ts` | logging | JSON line format, error double-write, access channel, `.in()` category, size-based rotation |
 | `i18n.spec.ts` | bilingual strings | en/zh dictionary resolution, `{var}` interpolation |
