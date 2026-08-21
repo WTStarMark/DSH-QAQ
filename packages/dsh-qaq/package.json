@@ -1,6 +1,6 @@
 {
   "name": "dsh-qaq",
-  "version": "0.4.5",
+  "version": "0.5.5",
   "description": "QAQ backup plugin: snapshots the profile's startup config to ~/.dsh/.qaq once the host boot settles. Backup-only; does not detect failure, roll back, or alter DSH behavior.",
   "private": true,
   "type": "module",

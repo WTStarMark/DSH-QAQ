@@ -4,6 +4,24 @@ QAQ — DeepSeek Harness launch resilience guard. All notable changes are docume
 
 Format follows [Keep a Changelog](https://keepachangelog.com/) — each release is grouped into **Added / Fixed / Changed / Removed**.
 
+## [0.5.5] — 2026-08-21 · Web GUI, DSH source-level update & version alignment
+
+### Added
+- **DSH version detection** (`src/dsh-version.ts`): resolve the managed DeepSeek Harness version from the source checkout manifest (or an optional `dsh --version` exec for PATH/npm installs); new `qaq dsh-version` command.
+- **Full semver comparison incl. prerelease** (`src/update.ts` `parseSemver`/`compareSemver`): `0.1.0-rc.10 > 0.1.0-rc.9`, prerelease < release — mirrors DSH's own release-tooling rules (the old triple-only comparison could miss rc-level updates).
+- **Source-level DSH update machine** (`src/dsh-update.ts`): plan (read-only preflight + lossless snapshot) → apply (switch → `pnpm install --frozen-lockfile` → `pnpm build` → version verify) with automatic rollback (`git checkout --force` to the recorded commit) on any failure; refuses while DSH is running (heartbeat/busy port); never runs `git clean`, never touches untracked/ignored data (node_modules, `.env`, `.sessions`, `.storages`); local tracked modifications are archived as diffs under `~/.dsh/.qaq/update/backup-<ts>/` before switching.
+- **Remote tag check**: `fetchDshLatestTag`/`checkDshUpdate` via the public GitHub tags API (injectable fetch, offline-safe).
+- **CLI**: `qaq dsh-update --check|--apply [--tag dsh-vX] [--cwd] [--yes]`.
+- **TUI**: menu [11] now checks BOTH QAQ and the managed DSH; the header shows the DSH version; a second press applies the DSH source-level update in-place (staged progress), or downloads QAQ's source archive as before.
+- **Web GUI (`qaq web` / `qaq serve`)**: a local HTTP + WebSocket console (`src/web.ts`) that reuses all existing modules — status overview, launch/stop the guard, backup/restore, reset counters, mount dsh-qaq, plugin management (enable/disable/install/uninstall), log viewer (error/access/host/qaq), sideload watch, hot-update channels, version check (QAQ + DSH). The frontend (`public/web/`) **strictly reuses DSH's `--dsw-*` design tokens, font stack, easing and the `body[data-ds-dark-theme]` light/dark theme** (light/dark/system) for a unified look with the DSH web GUI; binds `127.0.0.1:3090` by default, owns the guard lock + supervised child (the `qaq tui` role), and releases the lock + stops the supervised child on Ctrl+C.
+
+### Changed
+- `qaq tui` header: `QAQ vX · DSH vY`.
+- **Version alignment**: folded the unreleased `0.4.6`; `package.json` and `packages/dsh-qaq/package.json` unified at `0.5.5`.
+
+### Tests
+- `test/dsh-version.spec.ts`, `test/dsh-update.spec.ts` (plan refusals, lossless snapshot archive, apply success / stash-before-switch / verify-mismatch rollback / install-failure rollback / frozen-install conservatism); `test/update.spec.ts` gains full-semver ordering cases.
+
 ## [0.4.5] — 2026-08-21 · guard double safeguard: loaded-config fingerprint gate & anti-loop walk-back rollback
 
 ### Added
@@ -22,7 +40,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/) — each release 
 ## [0.4.4] — 2026-08-18 · version update check (Beta) & version alignment
 
 ### Added
-- Version update check (Beta): the TUI shows the local version in the header, gains a "Check for updates (Beta)" menu item, and shows "- new update vX.X.X" in the status area when a newer release exists on GitHub (<https://github.com/WTStarMark/QAQ>).
+- Version update check (Beta): the TUI shows the local version in the header, gains a "Check for updates (Beta)" menu item, and shows "- new update vX.X.X" in the status area when a newer release exists on GitHub (<https://github.com/WTStarMark/DSH-QAQ>).
 - Confirmed-update flow: pressing the item again after an update is found downloads the latest master source archive into `~/.dsh/.qaq/update/` and prints the upgrade steps (`qaq setup`).
 
 ### Changed

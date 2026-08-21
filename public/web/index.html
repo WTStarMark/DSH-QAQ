@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>QAQ · DeepSeek Harness 守卫</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="stylesheet" href="/app.css" />
+<script>
+  // Theme boot (same contract as DSH ui-theme): read localStorage, else system.
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('qaq-theme'); } catch (e) {}
+    var dark = t === 'dark' || (t !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if (dark) document.body.setAttribute('data-ds-dark-theme', '');
+    window.__qaqTheme = t || (dark ? 'dark' : 'light');
+  })();
+</script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 32 32" width="26" height="26">
+          <rect x="1" y="1" width="30" height="30" rx="8" fill="#4176E6"/>
+          <text x="16" y="22" font-size="16" font-weight="700" fill="#fff" text-anchor="middle" font-family="-apple-system,Segoe UI,Arial,sans-serif">Q</text>
+        </svg>
+        <span class="name">QAQ</span>
+        <span class="chip" id="brand-ver">—</span>
+      </div>
+      <nav class="nav" id="nav"></nav>
+      <div class="sidebar-foot">
+        <span class="ver" id="foot-ver">—</span>
+        <button class="btn sm" id="btn-theme" title="切换主题">主题</button>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <span class="title" id="top-title">总览</span>
+        <span class="pill status-idle" id="top-mode">—</span>
+        <span class="spacer"></span>
+        <span class="pill status-idle" id="top-conn">—</span>
+        <div class="theme-toggle" id="theme-toggle">
+          <button data-theme="light">浅色</button>
+          <button data-theme="dark">深色</button>
+          <button data-theme="system">跟随系统</button>
+        </div>
+      </header>
+      <div class="content" id="content"><div class="empty">加载中…</div></div>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

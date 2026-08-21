@@ -4,9 +4,11 @@
  * The local version is read from the package.json sitting next to the bundle
  * (`src/` and `dist/` are both one level under the repo root, so
  * `../package.json` resolves in dev (tsx) and in the esbuild bundle alike).
- * The remote "latest" version is read from the repo's package.json on the
- * master branch — the repo publishes no releases/tags yet, so the raw file is
- * the authoritative version source. Comparison is a plain numeric
+ * The remote "latest" version is read THROUGH THE GITHUB API (contents
+ * endpoint — base64-encoded package.json of the repo's default branch). The
+ * raw.githubusercontent.com variant was dropped: it is unreachable on some
+ * networks (and the renamed repo's default branch is `main`, not `master`),
+ * so `?ref=` pins it explicitly. Comparison is a plain numeric
  * major.minor.patch triple.
  *
  * All network I/O goes through an injectable fetch (default: the Node 22
@@ -18,15 +20,18 @@ import { fileURLToPath } from 'node:url'
 import { qaqDir, resolveDshHome } from './paths.ts'
 
 /** The GitHub repo the update check talks to. */
-export const UPDATE_REPO = 'WTStarMark/QAQ'
-/** Branch used as the update source (no tags/releases exist yet). */
-export const UPDATE_BRANCH = 'master'
-/** Raw package.json of the latest master — carries the remote version. */
-export const UPDATE_CHECK_URL = 'https://raw.githubusercontent.com/' + UPDATE_REPO + '/' + UPDATE_BRANCH + '/package.json'
-/** Master source archive (zip) — what a confirmed update downloads. */
+export const UPDATE_REPO = 'WTStarMark/DSH-QAQ'
+/** Branch used as the update source (the renamed repo's default branch is
+ *  `main`; there is no `master`). */
+export const UPDATE_BRANCH = 'main'
+/** API contents copy of the branch's package.json — carries the remote version
+ *  as a base64 payload (raw.githubusercontent.com is unreliable/blocked on some
+ *  networks, so the check goes through api.github.com). */
+export const UPDATE_CHECK_URL = 'https://api.github.com/repos/' + UPDATE_REPO + '/contents/package.json?ref=' + UPDATE_BRANCH
+/** Default-branch source archive (zip) — what a confirmed update downloads. */
 export const UPDATE_SOURCE_URL = 'https://codeload.github.com/' + UPDATE_REPO + '/zip/refs/heads/' + UPDATE_BRANCH
 /** Network timeout for check/download (ms). */
-export const UPDATE_TIMEOUT_MS = 8000
+export const UPDATE_TIMEOUT_MS = 15000
 
 export interface VersionTriple { major: number; minor: number; patch: number }
 
@@ -43,6 +48,62 @@ export function compareVersions(a: string, b: string): -1 | 0 | 1 {
   const vb = parseVersion(b) ?? { major: 0, minor: 0, patch: 0 }
   const cmp = (x: number, y: number): -1 | 0 | 1 => (x > y ? 1 : x < y ? -1 : 0)
   return cmp(va.major, vb.major) || cmp(va.minor, vb.minor) || cmp(va.patch, vb.patch)
+}
+
+/** ---------------------------------------------------------------------------
+ * Full semver comparison (incl. prerelease) — used for DSH versions, whose
+ * releases are `0.1.0-rc.N` chains. Mirrors the rules of DSH's own release
+ * tooling (scripts/release/bump.ts compareVersions):
+ *   - release numbers dominate (0.1.1 > 0.1.0 regardless of prerelease)
+ *   - a prerelease ranks BELOW the release it precedes (0.1.1-rc.1 < 0.1.1)
+ *   - rc fields compare numerically (`rc.10 > rc.2`)
+ *   - numeric prerelease fields rank BELOW alphanumeric ones
+ * Unparsable input compares as 0.0.0 (same convention as compareVersions).
+ * ------------------------------------------------------------------------- */
+
+export interface SemverParts {
+  major: number
+  minor: number
+  patch: number
+  /** Prerelease identifiers split on '.', empty when absent. */
+  pre: string[]
+}
+
+/** Parse "v?M.m.p[-pre...]" into parts; null on garbage. */
+export function parseSemver(s: string): SemverParts | null {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(String(s).trim())
+  if (!m) return null
+  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]), pre: m[4] ? m[4].split('.') : [] }
+}
+
+/** -1 if a < b, 0 if equal, 1 if a > b (full semver precedence incl. rc). */
+export function compareSemver(a: string, b: string): -1 | 0 | 1 {
+  const pa = parseSemver(a) ?? { major: 0, minor: 0, patch: 0, pre: [] }
+  const pb = parseSemver(b) ?? { major: 0, minor: 0, patch: 0, pre: [] }
+  const cmp = (x: number, y: number): -1 | 0 | 1 => (x > y ? 1 : x < y ? -1 : 0)
+  const numbers = cmp(pa.major, pb.major) || cmp(pa.minor, pb.minor) || cmp(pa.patch, pb.patch)
+  if (numbers !== 0) return numbers
+  const aPre = pa.pre, bPre = pb.pre
+  if (aPre.length === 0 || bPre.length === 0) {
+    if (aPre.length === bPre.length) return 0
+    // A release outranks its own prereleases.
+    return aPre.length === 0 ? 1 : -1
+  }
+  for (let i = 0; i < Math.max(aPre.length, bPre.length); i++) {
+    const x = aPre[i], y = bPre[i]
+    if (x === undefined) return -1
+    if (y === undefined) return 1
+    if (x === y) continue
+    const xN = /^\d+$/.test(x), yN = /^\d+$/.test(y)
+    if (xN && yN) {
+      const d = Number(x) - Number(y)
+      if (d !== 0) return d > 0 ? 1 : -1
+      continue
+    }
+    if (xN !== yN) return xN ? -1 : 1 // numeric < alphanumeric
+    return x < y ? -1 : 1
+  }
+  return 0
 }
 
 /** Read the local QAQ version from the package.json next to this bundle. */
@@ -74,6 +135,21 @@ export interface UpdateCheckOptions {
   url?: string
 }
 
+/** Pull a version string out of either a plain package.json payload
+ *  ({\"version\": \"0.4.5\"}) or a GitHub API contents payload
+ *  ({encoding: \"base64\", content: \"…\"}). Null when absent/unparsable. */
+export function extractRemoteVersion(json: Record<string, unknown> | null | undefined): string | null {
+  if (!json || typeof json !== 'object') return null
+  if (typeof json.version === 'string') return json.version
+  if (json.encoding === 'base64' && typeof json.content === 'string') {
+    try {
+      const decoded = JSON.parse(Buffer.from(json.content, 'base64').toString('utf8')) as { version?: unknown }
+      return typeof decoded.version === 'string' ? decoded.version : null
+    } catch { return null }
+  }
+  return null
+}
+
 /** Check GitHub for a newer QAQ. Never throws — failures return ok:false. */
 export async function checkForUpdate(opts: UpdateCheckOptions = {}): Promise<UpdateCheckResult> {
   const current = resolveLocalVersion()
@@ -89,8 +165,7 @@ export async function checkForUpdate(opts: UpdateCheckOptions = {}): Promise<Upd
       clearTimeout(timer)
     }
     if (!res.ok) return { ok: false, current, latest: null, updateAvailable: false, error: 'HTTP ' + res.status }
-    const json = await res.json() as { version?: unknown }
-    const latest = typeof json?.version === 'string' ? json.version : ''
+    const latest = await extractRemoteVersion(await res.json() as Record<string, unknown>)
     if (!latest || !parseVersion(latest)) {
       return { ok: false, current, latest: null, updateAvailable: false, error: 'no parseable version in remote package.json' }
     }
