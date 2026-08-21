@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  parseVersion, compareVersions, resolveLocalVersion, checkForUpdate, downloadUpdateSource,
+  parseVersion, compareVersions, parseSemver, compareSemver, resolveLocalVersion, checkForUpdate, downloadUpdateSource,
   UPDATE_CHECK_URL, UPDATE_SOURCE_URL,
 } from '../src/update.ts'
 
@@ -37,6 +37,36 @@ describe('parseVersion / compareVersions', () => {
   })
 })
 
+describe('parseSemver / compareSemver (DSH rc-aware full semver)', () => {
+  it('parses prerelease parts', () => {
+    expect(parseSemver('0.1.0-rc.5')).toEqual({ major: 0, minor: 1, patch: 0, pre: ['rc', '5'] })
+    expect(parseSemver('0.1.1')).toEqual({ major: 0, minor: 1, patch: 1, pre: [] })
+    expect(parseSemver('v1.2.3-beta.1')).toEqual({ major: 1, minor: 2, patch: 3, pre: ['beta', '1'] })
+    expect(parseSemver('garbage')).toBeNull()
+  })
+
+  it('orders the DSH rc chain numerically within a release', () => {
+    expect(compareSemver('0.1.0-rc.5', '0.1.0-rc.8')).toBe(-1)
+    expect(compareSemver('0.1.0-rc.8', '0.1.0-rc.10')).toBe(-1)
+    expect(compareSemver('0.1.0-rc.10', '0.1.0-rc.9')).toBe(1)
+    expect(compareSemver('0.1.0-rc.5', '0.1.0-rc.5')).toBe(0)
+  })
+
+  it('ranks a prerelease below the release it precedes, and release numbers dominate', () => {
+    expect(compareSemver('0.1.1-rc.1', '0.1.1')).toBe(-1)
+    expect(compareSemver('0.1.1-rc.1', '0.1.1-rc.1')).toBe(0)
+    expect(compareSemver('0.1.1', '0.1.1-rc.1')).toBe(1)
+    // release numbers dominate regardless of prerelease
+    expect(compareSemver('0.1.1-rc.1', '0.1.0-rc.99')).toBe(1)
+    expect(compareSemver('0.1.0-rc.8', '0.1.1-rc.1')).toBe(-1)
+  })
+
+  it('treats unparsable versions as 0.0.0', () => {
+    expect(compareSemver('', '0.0.1')).toBe(-1)
+    expect(compareSemver('abc', '0.0.0')).toBe(0)
+  })
+})
+
 describe('resolveLocalVersion', () => {
   it('reads the repo package.json next to the bundle (0.4.5 after alignment)', () => {
     const v = resolveLocalVersion()
@@ -61,6 +91,15 @@ describe('checkForUpdate (Beta)', () => {
     expect((await checkForUpdate({ fetchImpl: okFetch('0.4.4') })).updateAvailable).toBe(false)
   })
 
+  it('decodes a GitHub API base64 contents payload', async () => {
+    const payload = { encoding: 'base64', content: Buffer.from(JSON.stringify({ version: '0.5.0' }), 'utf8').toString('base64') }
+    const apiFetch = (async () => new Response(JSON.stringify(payload), { status: 200 })) as unknown as typeof fetch
+    const r = await checkForUpdate({ fetchImpl: apiFetch })
+    expect(r.ok).toBe(true)
+    expect(r.latest).toBe('0.5.0')
+    expect(r.updateAvailable).toBe(true)
+  })
+
   it('fails cleanly on an HTTP error', async () => {
     const r = await checkForUpdate({ fetchImpl: (async () => new Response('nope', { status: 404 })) as unknown as typeof fetch })
     expect(r.ok).toBe(false)
@@ -80,10 +119,10 @@ describe('checkForUpdate (Beta)', () => {
     expect(r.error).toContain('ECONNREFUSED')
   })
 
-  it('defaults to the WTStarMark/QAQ master package.json URL', () => {
-    expect(UPDATE_CHECK_URL).toContain('WTStarMark/QAQ')
-    expect(UPDATE_CHECK_URL).toContain('/master/package.json')
-    expect(UPDATE_SOURCE_URL).toContain('WTStarMark/QAQ')
+  it('checks the renamed repo’s default branch via the GitHub API', () => {
+    expect(UPDATE_CHECK_URL).toContain('api.github.com/repos/WTStarMark/DSH-QAQ/contents/package.json')
+    expect(UPDATE_CHECK_URL).toContain('?ref=main')
+    expect(UPDATE_SOURCE_URL).toContain('codeload.github.com/WTStarMark/DSH-QAQ/zip/refs/heads/main')
   })
 })
 

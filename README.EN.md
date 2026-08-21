@@ -71,12 +71,14 @@ qaq dsh web --port 3080 --yes
 | `qaq tui` / `qaq console`                   | open the full-screen live dashboard (or a compact menu on non-TTY)                                          |
 | `qaq setup`                                | install dependencies + build (one command)                                                                  |
 | `qaq install-plugin [--profile web]`         | auto-mount the `dsh-qaq` backup plugin into a profile                                                       |
+| `qaq dsh-version`                             | show the managed DSH version (checkout manifest / `dsh --version`)                                         |
+| `qaq dsh-update [--check|--apply] [--tag dsh-vX]` | source-level, lossless DSH update (git checkout): check GitHub `dsh-vX` tags; `--apply` backs up → switches → installs/builds → verifies, auto-rollback on failure; refuses while DSH is running |
 
 Global: `--yes` auto-confirms rollbacks.
 
 ## Dashboard (`qaq tui` / `qaq console`)
 
-On a terminal (`qaq tui`) QAQ shows a **full-screen, auto-refreshing dashboard** — the all-in-one entry for launching, watching, browsing logs, and managing plugins. It shows guard status, the current operating mode (launcher / sideload / idle), failure counters, last-good snapshot, plugin mount state, the **current version number**, a **log viewer**, and a **plugin manager**. On a non-TTY it falls back to a one-screen menu (`qaq console`). The interface is **bilingual** — press `12` in the TUI to toggle en/zh (a bare `qaq console` defaults to Chinese; `$QAQ_LANG` or `--lang` overrides). The actions available are:
+On a terminal (`qaq tui`) QAQ shows a **full-screen, auto-refreshing dashboard** — the all-in-one entry for launching, watching, browsing logs, and managing plugins. It shows guard status, the current operating mode (launcher / sideload / idle), failure counters, last-good snapshot, plugin mount state, the **current version numbers (QAQ and DSH)**, a **log viewer**, and a **plugin manager**. On a non-TTY it falls back to a one-screen menu (`qaq console`). The interface is **bilingual** — press `12` in the TUI to toggle en/zh (a bare `qaq console` defaults to Chinese; `$QAQ_LANG` or `--lang` overrides). The actions available are:
 
 ```
 [1]  supervise a dsh web boot (guard)   — fresh preflight each time, rollback + restart (launcher mode)
@@ -89,14 +91,16 @@ On a terminal (`qaq tui`) QAQ shows a **full-screen, auto-refreshing dashboard**
 [8]  view logs                           — full-screen log viewer (error/access/host/qaq)
 [9]  sideload watch                      — run a continuous sideload guard on an external DSH (toggle)
 [10] hot update                         — client-plugin live-reload watch + auto-restart toggles
-[11] check for updates (Beta)           — check GitHub for a newer version; press again to confirm the download
+[11] check for updates (Beta)           — check for a newer QAQ and DSH (DSH: source-level lossless update)
 [12] toggle en / zh
 [13] quit
 ```
 
 Navigation: `↑`/`↓` (or `j`/`k`) move the selection, `Enter`/`Space` run the action, digits `1..N` jump straight to an action, `q`/`Esc`/`Ctrl+C` quit.
 
-- **Version update (Beta, `[11]`)**: the dashboard header shows the local version (e.g. `v0.4.5`). Press `[11]` to check GitHub (<https://github.com/WTStarMark/QAQ>) for the latest version — when a newer release exists the status area shows `- new update vX.X.X`, and **pressing `[11]` again confirms the update**: the latest master source archive is downloaded to `~/.dsh/.qaq/update/` with the upgrade steps (`qaq setup`). Offline/failure only shows a message — it never touches any guard functionality.
+- **Version update (Beta, `[11]`)**: the dashboard header shows both the QAQ and the managed DSH version. Press `[11]` to check both at once — QAQ against <https://github.com/WTStarMark/DSH-QAQ>, DSH against the GitHub `dsh-vX` tags (requires a source checkout). When a newer release exists the status area shows `- new update vX.X.X` / `- DSH update vX.X.X`:
+  - **QAQ update**: pressing `[11]` again confirms — the latest default-branch (main) source archive is downloaded to `~/.dsh/.qaq/update/` with the upgrade steps (`qaq setup`).
+  - **DSH update (source-level, lossless)**: pressing `[11]` again applies — **backup → git checkout of the tag → `pnpm install --frozen-lockfile` → `pnpm build` → version verify**; before switching, the current git state and any local modification diffs are archived to `~/.dsh/.qaq/update/backup-<ts>/`, and any failing step **auto-rolls the checkout back** to the recorded commit (local changes survive as archived diffs; untracked data such as node_modules / .env / .sessions / .storages is never touched). **Refused while DSH is running** (heartbeat or busy port). After a successful update, boot the new version under the guard with menu `[1]` / `qaq dsh web`. Offline/failure only shows a message — it never touches any guard functionality.
 
 - **Log viewer** (`[8]`): `1`–`4` switch between `error.log` / `access.log` / `host.log` / `qaq.log`, `↑`/`↓` scroll, `q`/`Esc`/`Enter` return to the menu.
 - **Plugin manager** (`[7]`): manages the **real DeepSeek Harness** plugins. It auto-discovers the DSH installation (home + source checkout, detected running process via heartbeat), scans the checkout's `packages/` for the installable `@deepseek-ai/dsh-*` bundle packages, lists what's installed/enabled in the active profile, and lets you `↑`/`↓` select then `e` enable, `d` disable, `u` uninstall, `i` install. Disabling keeps the module installed but removes it from the profile's boot bundle; uninstalling removes both. It never touches QAQ's own repository.
@@ -166,6 +170,7 @@ The panel auto-refreshes while a supervised `dsh web` runs; the guard lock is he
 - `history/auto/<ts>/` — auto backup set (guard confirm / plugin real conversation; independent 10-snapshot quota)
 - `history/manual/<ts>/` — manual backup set (`qaq backup` / TUI `[3]`; independent 3-snapshot quota)
 - `rolled-back/<ts>/` — the broken config saved before a rollback (for manual recovery)
+- `update/backup-<ts>/` — lossless DSH source-update snapshots (pre-switch git state, local-change diffs, rollback info); downloaded DSH source archives also land under `update/`
 - `log/` — structured multi-file logs (see below)
 
 **Never snapshotted**: credentials, sessions, storages, mcp-servers.
@@ -280,7 +285,7 @@ Changelog: [Changelog.md](Changelog.md) (中文版 [Changelog.zh.md](Changelog.z
 
 Contributions are welcome — bug reports, feature requests, and pull requests all help make QAQ better.
 
-**Report a bug / request a feature**: open an [issue](https://github.com/WTStarMark/QAQ/issues) with reproduction steps (excerpts from `~/.dsh/.qaq/log/access.log` and `error.log` go a long way) and your environment (OS, Node version).
+**Report a bug / request a feature**: open an [issue](https://github.com/WTStarMark/DSH-QAQ/issues) with reproduction steps (excerpts from `~/.dsh/.qaq/log/access.log` and `error.log` go a long way) and your environment (OS, Node version).
 
 **Send a pull request**:
 

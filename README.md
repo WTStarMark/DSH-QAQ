@@ -66,12 +66,14 @@ qaq dsh web --port 3080 --yes
 | `qaq tui` / `qaq console`                    | 打开全屏实时仪表盘（非 TTY 时退回简洁菜单）                             |
 | `qaq setup`                                  | 一条命令安装依赖 + 构建                                                 |
 | `qaq install-plugin [--profile web]`         | 自动把 dsh-qaq 备份插件挂载进 profile                                   |
+| `qaq dsh-version`                             | 显示被管理 DSH 的版本（checkout manifest / `dsh --version`）            |
+| `qaq dsh-update [--check|--apply] [--tag dsh-vX]` | 源码级无损更新 DSH（git checkout）：检测 GitHub `dsh-vX` 标签；`--apply` 备份 → 切换 → install/build → 验证，失败自动回滚；DSH 运行中拒绝执行 |
 
 全局开关：`--yes` 自动确认回滚。
 
 ## 仪表盘（`qaq tui` / `qaq console`）
 
-在终端（`qaq tui`）下 QAQ 显示**全屏、自动刷新**的仪表盘——TUI 是**全能入口**：既能启动守卫（启动器模式），也能附着到外部启动的 DSH（侧载模式），还能浏览日志、管理插件。面板显示守卫状态、当前运行模式（启动器 / 侧载 / 空闲）、失败计数、last-good 快照、插件挂载状态、**当前版本号**、**日志查看器**和**插件管理器**。非 TTY 时退回一次性屏幕菜单（`qaq console`）。界面**双语**——在 TUI 内按 `12` 切换 en/zh（裸 `qaq console` 默认中文；`$QAQ_LANG` 或 `--lang` 可覆盖）。可用操作：
+在终端（`qaq tui`）下 QAQ 显示**全屏、自动刷新**的仪表盘——TUI 是**全能入口**：既能启动守卫（启动器模式），也能附着到外部启动的 DSH（侧载模式），还能浏览日志、管理插件。面板显示守卫状态、当前运行模式（启动器 / 侧载 / 空闲）、失败计数、last-good 快照、插件挂载状态、**当前版本号（QAQ 与 DSH）**、**日志查看器**和**插件管理器**。非 TTY 时退回一次性屏幕菜单（`qaq console`）。界面**双语**——在 TUI 内按 `12` 切换 en/zh（裸 `qaq console` 默认中文；`$QAQ_LANG` 或 `--lang` 可覆盖）。可用操作：
 
 ```
 [1] 一键启动守卫（接管 dsh web）     — 启动器模式：每次自检，回滚 + 重启
@@ -84,14 +86,16 @@ qaq dsh web --port 3080 --yes
 [8] 查看日志                         — 全屏日志查看器（error/access/host/qaq）
 [9] 侧载 watch                       — 对外部启动的 DSH 运行持续侧载守卫（开关切换）
 [10] 热更新                          — client 插件热更监控 + bundle/dist 自动重启开关
-[11] 检测更新 (Beta)                 — 从 GitHub 检测新版本；发现更新后再次按本项确认下载
+[11] 检测更新 (Beta)                 — 检测 QAQ 与 DSH 新版本（DSH 为源码级无损更新）
 [12] 切换语言 en / zh
 [13] 退出
 ```
 
 导航：`↑`/`↓`（或 `j`/`k`）移动选择，`Enter`/`Space` 执行，数字 `1..N` 直达动作，`q`/`Esc`/`Ctrl+C` 退出。
 
-- **版本更新（Beta，`[11]`）**：仪表盘头部显示当前版本号（如 `v0.4.5`）；按 `[11]` 从 GitHub（<https://github.com/WTStarMark/QAQ>）检测最新版本——有新版本时状态区显示 `- 有新更新 vX.X.X`，**再次按 `[11]` 确认更新**：下载最新源码包到 `~/.dsh/.qaq/update/` 并提示升级步骤（`qaq setup`）。离线/失败仅提示，不影响任何守卫功能。
+- **版本更新（Beta，`[11]`）**：仪表盘头部显示 QAQ 与 DSH 两个版本号；按 `[11]` 同时检测二者——QAQ 从 <https://github.com/WTStarMark/DSH-QAQ> 检测，DSH 从 GitHub 的 `dsh-vX` 标签检测（需源码 checkout）。有新版本时状态区显示 `- 有新更新 vX.X.X` / `- DSH 有新版本 vX.X.X`：
+  - **QAQ 更新**：再次按 `[11]` 确认——下载最新源码包到 `~/.dsh/.qaq/update/` 并提示升级步骤（`qaq setup`）。
+  - **DSH 更新（源码级、无损）**：再次按 `[11]` 确认应用——流程为 **备份 → git 切换标签 → `pnpm install --frozen-lockfile` → `pnpm build` → 版本验证**；更新前把当前 git 状态与本地改动 diff 存档到 `~/.dsh/.qaq/update/backup-<ts>/`，任何一步失败都**自动回退**到原提交（本地改动以 diff 存档保留；node_modules / .env / .sessions / .storages 等未跟踪数据一律不动）。**DSH 正在运行时拒绝执行**（心跳或端口占用即拒）。更新成功后用菜单 `[1]` / `qaq dsh web` 在守卫下启动新版本。离线/失败仅提示，不影响任何守卫功能。
 
 - **日志查看器**（`[8]`）：`1`–`4` 切换 `error.log` / `access.log` / `host.log` / `qaq.log`，`↑`/`↓` 滚动，`q`/`Esc`/`Enter` 返回菜单。
 - **插件管理器**（`[7]`）：管理**真实的 DeepSeek Harness** 插件。它自动发现 DSH 安装（home + 源码 checkout，并通过心跳检测正在运行的进程），扫描 checkout 的 `packages/` 找到可安装的 `@deepseek-ai/dsh-*` bundle 包，列出当前 profile 里已安装/已启用的项；`↑`/`↓` 选中插件，然后 `e` 启用、`d` 停用、`u` 卸载、`i` 安装；`q`/`Esc` 返回菜单。**停用** = 保留模块但移出启动 bundle；**卸载** = 两者都移除。它绝不改动 QAQ 自己的仓库。
@@ -139,6 +143,7 @@ qaq dsh web --port 3080 --yes
 
 - 守卫状态、快照、日志：`~/.dsh/.qaq/`（或 `$DSH_HOME/.qaq/`）
 - profile 配置：`$DSH_HOME/profiles/<name>/`（`package.json` + `cordis.patch.yml`）
+- DSH 源码级更新的无损快照：`~/.dsh/.qaq/update/backup-<ts>/`（更新前 git 状态、本地改动 diff、回滚信息）与下载的源码包 `~/.dsh/.qaq/update/`
 - `qaq status` 会打印你环境下的确切路径。
 
 ## `qaq dsh web` 调优参数
@@ -275,7 +280,7 @@ CI（`.github/workflows/ci.yml`）在 **ubuntu-latest** 与 **windows-latest** �
 
 欢迎一切形式的贡献——Bug 报告、功能建议与 Pull Request 都能让 QAQ 变得更好。
 
-**报 Bug / 提需求**：在 [Issues](https://github.com/WTStarMark/QAQ/issues) 提交，附上复现步骤（`~/.dsh/.qaq/log/access.log` 与 `error.log` 的关键片段最有帮助）和你的环境（操作系统、Node 版本）。
+**报 Bug / 提需求**：在 [Issues](https://github.com/WTStarMark/DSH-QAQ/issues) 提交，附上复现步骤（`~/.dsh/.qaq/log/access.log` 与 `error.log` 的关键片段最有帮助）和你的环境（操作系统、Node 版本）。
 
 **提交 Pull Request**：
 

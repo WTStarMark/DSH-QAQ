@@ -18,14 +18,17 @@ import { Logger } from './log.ts'
 import { superviseBoot, type GuardOptions } from './guard.ts'
 import { openConsole } from './console.ts'
 import { installPlugin } from './install-plugin.ts'
-import { preflight } from './env.ts'
+import { preflight, resolveCommand } from './env.ts'
 import { manualBackup, manualRestore, isUsable, MAX_ESCALATION_STEPS } from './rollback.ts'
 import { watchOnce } from './watch.ts'
 import { makeT, resolveLang, type Lang } from './i18n.ts'
 import { runSetup } from './setup.ts'
+import { resolveDshVersion } from './dsh-version.ts'
+import { checkDshUpdate, planDshUpdate, applyDshUpdate } from './dsh-update.ts'
+import { runWeb } from './web.ts'
 
 interface CliArgs {
-  mode: 'dsh' | 'watch' | 'status' | 'backup' | 'restore' | 'reset' | 'console' | 'install-plugin' | 'setup' | 'help'
+  mode: 'dsh' | 'watch' | 'status' | 'backup' | 'restore' | 'reset' | 'console' | 'install-plugin' | 'setup' | 'dsh-version' | 'dsh-update' | 'web' | 'help'
   profile: string
   port?: number
   yes: boolean
@@ -35,10 +38,15 @@ interface CliArgs {
   threshold?: number
   cwd?: string
   lang: Lang
+  dshPort?: number
   attach?: number
   intervalMs?: number
   once?: boolean
   webhooks?: string[]
+  /** dsh-update: apply (default check). */
+  updateApply?: boolean
+  /** dsh-update: explicit target tag (default: latest from GitHub). */
+  tag?: string
 }
 
 function usage(lang: Lang): string {
@@ -55,6 +63,8 @@ Usage:
   qaq console                             ${t('cli.usage.console')}
   qaq install-plugin [--profile <name>]   ${t('cli.usage.installPlugin')}
   qaq setup                                  install deps + build (one-click)
+  qaq dsh-version                            show the managed DSH version
+  qaq dsh-update [--check|--apply] [--tag dsh-vX] [--cwd <dir>] [--yes]   check / apply a source-level DSH update (git checkout; refuses while DSH is running)
 Globals:
   --yes                                     auto-confirm rollbacks
   --lang en|zh                              console/preflight language (default zh; or \$QAQ_LANG)
@@ -82,6 +92,7 @@ export function parseCli(argv: string[]): CliArgs {
   const uiTimeoutMs = num('--ui-timeout')
   const threshold = num('--threshold')
   const cwd = val('--cwd')
+  const dshPort = num('--dsh-port')
   const attach = num('--attach')
   const intervalMs = num('--interval')
   const once = rest.includes('--once')
@@ -89,7 +100,7 @@ export function parseCli(argv: string[]): CliArgs {
   for (let i = 0; i < rest.length; i++) { if (rest[i] === '--webhook' && rest[i + 1] !== undefined) webhooks.push(rest[i + 1]) }
   const lang = resolveLang(rest)
 
-  const base = { yes, port, confirmMs, uiTimeoutMs, threshold, cwd, lang, attach, intervalMs, once, webhooks }
+  const base = { yes, port, confirmMs, uiTimeoutMs, threshold, cwd, lang, dshPort, attach, intervalMs, once, webhooks }
   if (first === 'setup' || first === 'install') return { mode: 'setup', profile: 'web', ...base }
   if (first === 'status') return { mode: 'status', profile: val('--profile') ?? 'web', ...base }
   if (first === 'backup') return { mode: 'backup', profile: val('--profile') ?? 'web', ...base }
@@ -97,7 +108,10 @@ export function parseCli(argv: string[]): CliArgs {
   if (first === 'reset') return { mode: 'reset', profile: val('--profile') ?? 'web', ...base }
   if (first === 'console' || first === 'menu' || first === 'gui' || first === 'tui') return { mode: 'console', profile: val('--profile') ?? 'web', ...base }
   if (first === 'install-plugin') return { mode: 'install-plugin', profile: val('--profile') ?? 'web', ...base }
+  if (first === 'dsh-version') return { mode: 'dsh-version', profile: val('--profile') ?? 'web', ...base }
+  if (first === 'dsh-update') return { mode: 'dsh-update', profile: val('--profile') ?? 'web', ...base, updateApply: rest.includes('--apply'), tag: val('--tag') }
   if (first === 'watch') return { mode: 'watch', profile: val('--profile') ?? 'web', ...base, attach: attach ?? port }
+  if (first === 'web' || first === 'serve' || first === 'gui-web') return { mode: 'web', profile: val('--profile') ?? 'web', ...base }
   if (first === 'help' || first === '-h' || first === '--help') return { mode: 'help', profile: 'web', ...base }
   // 'dsh', 'web', or bare => dsh supervision.
   return { mode: 'dsh', profile: 'web', ...base }
@@ -117,6 +131,9 @@ async function main(): Promise<void> {
     case 'console': return cmdConsole(args)
     case 'install-plugin': return cmdInstallPlugin(args.profile, args.lang)
     case 'watch': return cmdWatch(args)
+    case 'dsh-version': return cmdDshVersion(args)
+    case 'dsh-update': return cmdDshUpdate(args)
+    case 'web': return cmdWeb(args)
     case 'dsh': return cmdDsh(args)
   }
 }
@@ -170,6 +187,21 @@ function cmdInstallPlugin(profile: string, lang: Lang): void {
   process.stdout.write((r.ok ? '[qaq] ' : '[qaq][error] ') + r.message + '\n')
 }
 
+/** qaq web — start the local Web GUI (HTTP + WS). A long-lived process that
+ *  owns the guard lock + supervised child (like `qaq tui`). */
+async function cmdWeb(args: CliArgs): Promise<void> {
+  const srv = await runWeb({
+    profile: args.profile, port: args.port ?? 3090, cwd: args.cwd, lang: args.lang, dshPort: args.dshPort,
+    yes: args.yes, confirmMs: args.confirmMs, uiTimeoutMs: args.uiTimeoutMs, threshold: args.threshold,
+  })
+  process.stdout.write('[qaq] press Ctrl+C to stop\n')
+  await new Promise<void>((resolveStop) => {
+    const stop = (): void => { void srv.close().then(() => resolveStop()) }
+    process.on('SIGINT', stop)
+    process.on('SIGTERM', stop)
+  })
+}
+
 function cmdSetup(_args: CliArgs): void {
   const log = new Logger(resolveDshHome())
   const res = runSetup()
@@ -180,6 +212,83 @@ function cmdSetup(_args: CliArgs): void {
   } else {
     log.error('setup failed: ' + (res.error ?? 'unknown'))
     process.stderr.write('[qaq][setup] FAILED: ' + (res.error ?? 'unknown') + '\n')
+    process.exitCode = 1
+  }
+}
+
+/** qaq dsh-version — show the managed DSH version (checkout manifest, else `dsh --version`). */
+async function cmdDshVersion(args: CliArgs): Promise<void> {
+  const rc = resolveCommand(args.cwd)
+  const info = await resolveDshVersion({
+    checkout: rc.checkout ?? null,
+    allowExec: true,
+    command: rc.dshOnPath ? [rc.dshOnPath, '--version'] : ['dsh', '--version'],
+    cwd: rc.cwd,
+  })
+  process.stdout.write(JSON.stringify({ version: info.version, source: info.source, checkout: rc.checkout ?? null }, null, 2) + '\n')
+}
+
+/** qaq dsh-update — check / apply a SOURCE-LEVEL DSH update (git checkout).
+ *  Refuses while DSH is running; applies losslessly (backup → switch → install
+ *  → build → verify) with automatic rollback on failure. */
+async function cmdDshUpdate(args: CliArgs): Promise<void> {
+  const home = resolveDshHome()
+  const log = new Logger(home)
+  const t = makeT(args.lang)
+  const rc = resolveCommand(args.cwd)
+  const checkout = rc.checkout ?? null
+
+  // ---- --check (default) ----
+  if (!args.updateApply) {
+    if (!checkout) { process.stdout.write('[qaq] ' + t('cli.dshupdate.notCheckout') + '\n'); return }
+    process.stdout.write('[qaq] ' + t('cli.dshupdate.checking') + '\n')
+    const r = await checkDshUpdate({ checkout })
+    if (!r.ok) { process.stdout.write('[qaq] ' + t('cli.dshupdate.failed', { error: r.error ?? '?' }) + '\n'); return }
+    if (r.updateAvailable && r.latestTag && r.latestVersion) {
+      process.stdout.write('[qaq] ' + t('cli.dshupdate.available', { latest: r.latestVersion, current: r.current ?? '?' }) + '\n')
+      process.stdout.write('[qaq] apply with: qaq dsh-update --apply\n')
+    } else {
+      process.stdout.write('[qaq] ' + t('cli.dshupdate.latest', { version: r.current ?? '?' }) + '\n')
+    }
+    log.access('dsh-update check: ' + JSON.stringify({ ok: r.ok, current: r.current, latest: r.latestVersion, updateAvailable: r.updateAvailable }), { action: 'dsh-update-check', ok: r.ok })
+    return
+  }
+
+  // ---- --apply ----
+  if (!checkout) { process.stdout.write('[qaq][error] ' + t('cli.dshupdate.notCheckout') + '\n'); return }
+  let targetTag = args.tag ?? null
+  if (!targetTag) {
+    process.stdout.write('[qaq] ' + t('cli.dshupdate.checking') + '\n')
+    const r = await checkDshUpdate({ checkout })
+    if (!r.ok) { process.stdout.write('[qaq][error] ' + t('cli.dshupdate.failed', { error: r.error ?? '?' }) + '\n'); return }
+    if (!r.updateAvailable || !r.latestTag) { process.stdout.write('[qaq] ' + t('cli.dshupdate.latest', { version: r.current ?? '?' }) + '\n'); return }
+    targetTag = r.latestTag
+  }
+  const plan = await planDshUpdate({ home, profile: args.profile, checkout, targetTag })
+  if (!plan.ok) {
+    process.stdout.write('[qaq][error] ' + (plan.reason ?? 'plan refused') + '\n')
+    if (/running/i.test(plan.reason ?? '')) process.stdout.write('[qaq][error] ' + t('cli.dshupdate.running') + '\n')
+    return
+  }
+  let proceed = args.yes
+  if (!proceed && process.stdout.isTTY) {
+    proceed = await new Promise<boolean>((res) => {
+      import('node:readline').then(({ createInterface }) => {
+        const rl = createInterface({ input: process.stdin, output: process.stdout })
+        rl.question(t('cli.dshupdate.confirm', { version: plan.targetVersion ?? '?', tag: plan.targetTag }), (ans) => { rl.close(); res(ans.trim().toLowerCase().startsWith('y')) })
+      })
+    })
+  }
+  if (!proceed) { process.stdout.write('[qaq] ' + t('cli.dshupdate.aborted') + '\n'); return }
+
+  process.stdout.write('[qaq] ' + t('cli.dshupdate.applying', { version: plan.targetVersion ?? '?' }) + '\n')
+  const outcome = await applyDshUpdate({ plan, onLine: (l) => process.stdout.write('  ' + l + '\n') })
+  if (outcome.ok && outcome.finalVersion) {
+    process.stdout.write('[qaq] ' + t('cli.dshupdate.done', { version: outcome.finalVersion }) + '\n')
+    log.access('dsh-update applied: ' + plan.targetTag, { action: 'dsh-update-apply', ok: true, from: plan.currentVersion, to: plan.targetVersion, backupDir: plan.backupDir })
+  } else {
+    process.stdout.write('[qaq][error] ' + (outcome.rolledBack ? t('cli.dshupdate.rolledBack') : (outcome.detail ?? 'update failed')) + '\n')
+    log.access('dsh-update failed: ' + (outcome.detail ?? outcome.stage), { action: 'dsh-update-apply', ok: false, to: plan.targetVersion, backupDir: plan.backupDir })
     process.exitCode = 1
   }
 }

@@ -40,6 +40,8 @@ import { isHeartbeatFresh, pushEvent } from './shared-io.ts'
 import { verifyPatchInsertApplied, watchClientBundles, watchRestartTriggers, resolveClientBundlePaths } from './hot-update.ts'
 import { makeT, type Lang, type T } from './i18n.ts'
 import { checkForUpdate, downloadUpdateSource, resolveLocalVersion } from './update.ts'
+import { readCheckoutVersion } from './dsh-version.ts'
+import { checkDshUpdate, planDshUpdate, applyDshUpdate } from './dsh-update.ts'
 import { displayWidth, padEnd, truncate } from './width.ts'
 import { bannerGradient, hasColor, type RGB } from './color.ts'
 import { KeyParser } from './keys.ts'
@@ -157,6 +159,8 @@ export interface FrameInput {
   hotLine?: string | null
   /** Local QAQ version (shown in the header when present). */
   version?: string
+  /** Managed DSH version (shown in the header when resolvable). */
+  dshVersion?: string
   /** When an update is available, its status line (e.g. "- 有新更新 v0.5.0"). */
   updateLine?: string | null
   cols: number
@@ -323,15 +327,16 @@ export function buildFrame(f: FrameInput): string {
   // heights use a one-line compact header so nothing is occluded.
   const compact = rows < 16
   const ver = f.version ? ' v' + f.version : ''
+  const dshVer = f.dshVersion ? ' · DSH v' + f.dshVersion : ''
   if (compact) {
-    L.push(row(BOLD + 'QAQ' + ver + ' · ' + f.t('tui.langLabel', { l: f.lang === 'zh' ? '中文' : 'EN' }) + RESET, W))
+    L.push(row(BOLD + 'QAQ' + ver + dshVer + ' · ' + f.t('tui.langLabel', { l: f.lang === 'zh' ? '中文' : 'EN' }) + RESET, W))
   } else {
     if (f.color) {
       for (const l of bannerGradient(QAQ_ART, BLUE_GRAD[0], BLUE_GRAD[1])) L.push('  ' + l)
     } else {
       for (const l of QAQ_ART) L.push('  ' + l)
     }
-    L.push(row(DIM + f.profile + ' ·' + ver + ' · ' + f.t('tui.langLabel', { l: f.lang === 'zh' ? '中文' : 'EN' }) + RESET, W))
+    L.push(row(DIM + f.profile + ' ·' + ver + dshVer + ' · ' + f.t('tui.langLabel', { l: f.lang === 'zh' ? '中文' : 'EN' }) + RESET, W))
   }
   L.push(dblRule(W))
 
@@ -487,6 +492,8 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
   // update (downloads the master source archive).
   const version = resolveLocalVersion()
   let updateState: { latest: string | null; available: boolean } | null = null
+  /** DSH update-check state (source-level, git checkout). */
+  let dshUpdateState: { latestTag: string | null; latestVersion: string | null; available: boolean } | null = null
   let report: EnvReport | null = null
   let selected = 0
 
@@ -660,7 +667,10 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
     const sgStatus = sideGuard && sideGuard.timer
       ? { url: sideGuard.url, last: sideGuard.last, lastOk: sideGuard.lastOk, intervalMs: SIDE_GUARD_INTERVAL_MS }
       : undefined
-    out.write(buildFrame({ home, profile, t, lang, activeGuard, message, report, mode, conn, sideGuard: sgStatus, logs, plugins, backups, hot, hotLine: hotStatusLine(), version, updateLine: updateState?.available && updateState.latest ? t('tui.update.hasNew', { version: updateState.latest }) : null, cols, rows, selected, color: colorOn, clearFirst: firstRender }))
+    const dshCheckout = dshCtx().checkout
+    const qaqLine = updateState?.available && updateState.latest ? t('tui.update.hasNew', { version: updateState.latest }) : null
+    const dshLine = dshUpdateState?.available && dshUpdateState.latestVersion ? t('tui.update.dsh.hasNew', { version: dshUpdateState.latestVersion }) : null
+    out.write(buildFrame({ home, profile, t, lang, activeGuard, message, report, mode, conn, sideGuard: sgStatus, logs, plugins, backups, hot, hotLine: hotStatusLine(), version, dshVersion: dshCheckout ? (readCheckoutVersion(dshCheckout) ?? undefined) : undefined, updateLine: [qaqLine, dshLine].filter((x): x is string => Boolean(x)).join(' · ') || null, cols, rows, selected, color: colorOn, clearFirst: firstRender }))
     firstRender = false
   }
 
@@ -886,13 +896,45 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
     }
   }
 
-  /** "检测更新 (Beta)" — two-step flow: the first press checks GitHub for a
-   *  newer version; when one is found the status line shows "- 有新更新 vX.X.X"
-   *  and a second press confirms the update (downloads the master source
-   *  archive into ~/.dsh/.qaq/update/ and prints the upgrade steps). */
+  /** "检测更新 (Beta)" — checks BOTH QAQ (GitHub master) and the managed DSH
+   *  (GitHub dsh-vX tags) on the first press. When a DSH update is found, the
+   *  status line shows "- DSH 有新版本 vX.X.X" and a SECOND press applies the
+   *  source-level update (git checkout tag + frozen install + build + verify,
+   *  with lossless backup/rollback). QAQ's own confirmed press still just
+   *  downloads its source archive. */
   async function runUpdateFlow(): Promise<void> {
+    // Confirmed DSH apply (second press).
+    if (dshUpdateState?.available && dshUpdateState.latestTag && dshUpdateState.latestVersion) {
+      const cc = dshCtx()
+      if (!cc.checkout) { message = t('tui.update.dsh.notCheckout'); paint(); return }
+      message = t('tui.update.dsh.applying', { version: dshUpdateState.latestVersion })
+      paint()
+      const plan = await planDshUpdate({ home, profile, checkout: cc.checkout, targetTag: dshUpdateState.latestTag })
+      if (!plan.ok) {
+        message = plan.reason && /running/i.test(plan.reason) ? t('tui.update.dsh.running') : (plan.reason ?? 'update refused')
+        log.warn('dsh-update plan refused: ' + (plan.reason ?? '?'))
+        paint()
+        return
+      }
+      const outcome = await applyDshUpdate({
+        plan,
+        onStage: (st) => { message = 'dsh-update: ' + st; paint() },
+        onLine: (l) => { log.info(l) },
+      })
+      if (outcome.ok && outcome.finalVersion) {
+        dshUpdateState = null
+        message = t('tui.update.dsh.applied', { version: outcome.finalVersion })
+        log.access('dsh-update applied: ' + plan.targetTag, { action: 'dsh-update-apply', ok: true, from: plan.currentVersion, to: plan.targetVersion, backupDir: plan.backupDir })
+      } else {
+        message = outcome.rolledBack ? t('tui.update.dsh.rolledBack') : (outcome.detail ?? 'dsh-update failed')
+        log.access('dsh-update failed: ' + (outcome.detail ?? outcome.stage), { action: 'dsh-update-apply', ok: false, to: plan.targetVersion, backupDir: plan.backupDir })
+        log.error('dsh-update failed: ' + (outcome.detail ?? outcome.stage))
+      }
+      paint()
+      return
+    }
+    // Confirmed QAQ download (second press).
     if (updateState?.available && updateState.latest) {
-      // Confirmed update: download the source archive.
       message = t('tui.update.downloading', { version: updateState.latest })
       paint()
       const res = await downloadUpdateSource({ version: updateState.latest, dir: join(qaqDir(home), 'update') })
@@ -905,18 +947,40 @@ export async function runTui(opts: ConsoleOpts, profile = 'web'): Promise<boolea
       }
       return
     }
+    // First press: check both QAQ and DSH.
     message = t('tui.update.checking')
     paint()
-    const r = await checkForUpdate()
-    if (!r.ok) {
+    const [q, d] = await Promise.all([
+      checkForUpdate(),
+      (async () => {
+        const cc = dshCtx()
+        if (!cc.checkout) return { ok: false as const, current: null, latestTag: null, latestVersion: null, updateAvailable: false, error: 'no-dsh-checkout' }
+        return checkDshUpdate({ checkout: cc.checkout })
+      })(),
+    ])
+    const parts: string[] = []
+    if (q.ok) {
+      updateState = { latest: q.latest, available: q.updateAvailable }
+      parts.push(q.updateAvailable && q.latest
+        ? t('tui.update.available', { current: q.current, latest: q.latest })
+        : t('tui.update.latest', { version: q.current }))
+    } else {
       updateState = null
-      message = t('tui.update.failed', { error: r.error ?? '?' })
-      return
+      parts.push(t('tui.update.failed', { error: q.error ?? '?' }))
     }
-    updateState = { latest: r.latest, available: r.updateAvailable }
-    message = r.updateAvailable
-      ? t('tui.update.available', { current: r.current, latest: r.latest ?? '?' })
-      : t('tui.update.latest', { version: r.current })
+    if (d.ok) {
+      dshUpdateState = { latestTag: d.latestTag, latestVersion: d.latestVersion, available: d.updateAvailable }
+      parts.push(d.updateAvailable && d.latestVersion
+        ? t('tui.update.dsh.available', { current: d.current ?? '?', latest: d.latestVersion })
+        : t('tui.update.dsh.latest', { version: d.current ?? '?' }))
+    } else if (d.error !== 'no-dsh-checkout') {
+      dshUpdateState = null
+      parts.push(t('tui.update.dsh.failed', { error: d.error ?? '?' }))
+    } else {
+      dshUpdateState = null
+    }
+    message = parts.join(' · ')
+    log.access('update check: qaq=' + String(q.ok ? (q.latest ?? '?') : 'fail') + ' dsh=' + String(d.ok ? (d.latestTag ?? '?') : (d.ok ? '?' : 'fail')), { action: 'update-check', qaqOk: q.ok, dshOk: d.ok, dshLatest: d.latestVersion })
   }
 
   /**

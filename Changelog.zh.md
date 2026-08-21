@@ -4,6 +4,24 @@ QAQ —— DeepSeek Harness 启动容灾守卫。本文件依据 git 提交历�
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)——每个版本按 **新增 / 修复 / 变更 / 移除** 分组。
 
+## [0.5.5] — 2026-08-21 · Web GUI、DSH 源码级更新与版本对齐
+
+### 新增
+- **DSH 版本检测**（`src/dsh-version.ts`）：从源码 checkout manifest（或可选 `dsh --version` 执行，用于 PATH/npm 安装）解析被管理 DSH 的版本；新增 `qaq dsh-version` 命令。
+- **全 semver 比较（含预发布）**（`src/update.ts` 的 `parseSemver`/`compareSemver`）：`0.1.0-rc.10 > 0.1.0-rc.9`、预发布 < 正式版——与 DSH 自身 release 工具规则一致（旧的三元组比较会漏掉 rc 间更新）。
+- **源码级 DSH 更新机**（`src/dsh-update.ts`）：plan（只读预检 + 无损快照）→ apply（切换 → `pnpm install --frozen-lockfile` → `pnpm build` → 版本验证），任何一步失败自动回滚（`git checkout --force` 回到记录的提交）；DSH 运行中拒绝执行（心跳/端口占用）；全程不跑 `git clean`、不触碰未跟踪/忽略数据（node_modules、`.env`、`.sessions`、`.storages`）；本地 tracked 改动先以 diff 存档到 `~/.dsh/.qaq/update/backup-<ts>/` 再切换。
+- **远端标签检测**：`fetchDshLatestTag`/`checkDshUpdate` 走 GitHub 公开 tags API（fetch 可注入、离线安全）。
+- **CLI**：`qaq dsh-update --check|--apply [--tag dsh-vX] [--cwd] [--yes]`。
+- **TUI**：菜单 [11] 现在同时检测 QAQ 与被管理 DSH；头部显示 DSH 版本；再次按键就地应用 DSH 源码级更新（分阶段进度），或像以前一样下载 QAQ 源码包。
+- **Web GUI（`qaq web` / `qaq serve`）**：本地 HTTP + WebSocket 控制台（`src/web.ts`），复用全部现有模块——状态总览、启动/停止守卫、备份/还原、重置计数、挂载 dsh-qaq、插件管理（启用/禁用/安装/卸载）、日志查看（error/access/host/qaq）、侧载 watch、热更新三通道、版本检测（QAQ + DSH）。前端（`public/web/`）**严格复用 DSH 的 `--dsw-*` 设计令牌、字体栈、缓动与 `body[data-ds-dark-theme]` 明暗主题**（浅色/深色/跟随系统），与 DSH Web GUI 视觉统一；默认仅绑定 `127.0.0.1:3090`，持有守卫锁与受监督子进程（等价于 `qaq tui` 的角色），Ctrl+C 释放锁并停止受监督子进程。
+
+### 变更
+- `qaq tui` 头部：`QAQ vX · DSH vY`。
+- **版本对齐**：归并未发布的 `0.4.6`，`package.json` 与 `packages/dsh-qaq/package.json` 统一升至 `0.5.5`。
+
+### 测试
+- 新增 `test/dsh-version.spec.ts`、`test/dsh-update.spec.ts`（plan 拒绝路径、无损快照存档、apply 成功/切前 stash/版本不匹配回滚/install 失败回滚/frozen 安装保守策略）；`test/update.spec.ts` 增加全 semver 排序用例。
+
 ## [0.4.5] — 2026-08-21 · 守卫双重保障：配置指纹门控与防循环步进回滚
 
 ### 新增
@@ -22,7 +40,7 @@ QAQ —— DeepSeek Harness 启动容灾守卫。本文件依据 git 提交历�
 ## [0.4.4] — 2026-08-18 · 版本更新检测（Beta）与版本对齐
 
 ### 新增
-- 版本更新检测（Beta）：TUI 头部显示当前版本号，新增「检测更新 (Beta)」菜单项；GitHub（<https://github.com/WTStarMark/QAQ>）存在更新时，状态区显示「- 有新更新 vX.X.X」。
+- 版本更新检测（Beta）：TUI 头部显示当前版本号，新增「检测更新 (Beta)」菜单项；GitHub（<https://github.com/WTStarMark/DSH-QAQ>）存在更新时，状态区显示「- 有新更新 vX.X.X」。
 - 确认更新流程：发现更新后再次按该菜单项，下载最新 master 源码包到 `~/.dsh/.qaq/update/`，并提示升级步骤（`qaq setup`）。
 
 ### 变更
