@@ -25,6 +25,11 @@ export interface ProfileState {
   lastGoodSnapshot?: string
   /** True from the moment a rollback ran until the next successful boot ("anti-loop fence"). */
   rolledBackAt?: string
+  /** Guard plan B: walk-back state for escalating to OLDER snapshots when the
+   *  restored last-good is itself still failing inside the fence window. offset
+   *  is the ordered index (newest-first) of the snapshot last restored; the next
+   *  same-window failure moves to offset+1. Cleared on a genuine success. */
+  rollbackEscalation?: { offset: number; ts: string }
 }
 
 /** The persisted guard state file. */

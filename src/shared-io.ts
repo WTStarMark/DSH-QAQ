@@ -46,6 +46,12 @@ export interface PluginState {
   profileOk?: boolean
   /** The bundle list snapshot at boot (what plugins were in bounds). */
   bundles?: string[]
+  /** Fingerprint of the profile config this process ACTUALLY loaded at boot
+   *  (guard plan A: lets the CLI refuse to bless an on-disk config that the
+   *  running process never booted with). Computed ONCE at apply() and kept
+   *  stable across refreshes — never re-read from disk, so a post-boot edit is
+   *  not mistaken for "loaded". See src/verify-config.ts + the dsh-qaq plugin. */
+  loadedFingerprint?: string
 }
 
 /** Heartbeat written while DSH is running. */

@@ -91,7 +91,7 @@ qaq dsh web --port 3080 --yes
 
 导航：`↑`/`↓`（或 `j`/`k`）移动选择，`Enter`/`Space` 执行，数字 `1..N` 直达动作，`q`/`Esc`/`Ctrl+C` 退出。
 
-- **版本更新（Beta，`[11]`）**：仪表盘头部显示当前版本号（如 `v0.4.4`）；按 `[11]` 从 GitHub（<https://github.com/WTStarMark/QAQ>）检测最新版本——有新版本时状态区显示 `- 有新更新 vX.X.X`，**再次按 `[11]` 确认更新**：下载最新源码包到 `~/.dsh/.qaq/update/` 并提示升级步骤（`qaq setup`）。离线/失败仅提示，不影响任何守卫功能。
+- **版本更新（Beta，`[11]`）**：仪表盘头部显示当前版本号（如 `v0.4.5`）；按 `[11]` 从 GitHub（<https://github.com/WTStarMark/QAQ>）检测最新版本——有新版本时状态区显示 `- 有新更新 vX.X.X`，**再次按 `[11]` 确认更新**：下载最新源码包到 `~/.dsh/.qaq/update/` 并提示升级步骤（`qaq setup`）。离线/失败仅提示，不影响任何守卫功能。
 
 - **日志查看器**（`[8]`）：`1`–`4` 切换 `error.log` / `access.log` / `host.log` / `qaq.log`，`↑`/`↓` 滚动，`q`/`Esc`/`Enter` 返回菜单。
 - **插件管理器**（`[7]`）：管理**真实的 DeepSeek Harness** 插件。它自动发现 DSH 安装（home + 源码 checkout，并通过心跳检测正在运行的进程），扫描 checkout 的 `packages/` 找到可安装的 `@deepseek-ai/dsh-*` bundle 包，列出当前 profile 里已安装/已启用的项；`↑`/`↓` 选中插件，然后 `e` 启用、`d` 停用、`u` 卸载、`i` 安装；`q`/`Esc` 返回菜单。**停用** = 保留模块但移出启动 bundle；**卸载** = 两者都移除。它绝不改动 QAQ 自己的仓库。

@@ -17,6 +17,7 @@ import { detectFailedFibers } from './degraded.ts'
 import { incrementFailure } from './guard.ts'
 import { maybeRollback, recordSuccess } from './rollback.ts'
 import { profileDir } from './paths.ts'
+import { liveBootMatches } from './verify-config.ts'
 import { Logger } from './log.ts'
 import { readPluginHeartbeat, pushEvent, type PluginHeartbeat } from './shared-io.ts'
 import { deliverWebhooks } from './webhook.ts'
@@ -71,6 +72,10 @@ async function failAndMaybeRollback(opts: WatchOptions, kind: 'host' | 'ui', err
   const rolled = await maybeRollback({
     home: opts.home, profile: opts.profile, kind,
     autoConfirm: opts.autoConfirm ?? false, log: logCtx, threshold: effectiveThreshold,
+    // Plan B: when the restored last-good is itself still failing inside the
+    // fence window, walk back to the next OLDER valid snapshot instead of
+    // hard-stopping (the fence still blocks a repeat of the identical rollback).
+    allowEscalation: true,
   })
   emitWatchEvents(opts, kind, error, rolled, logCtx)
   return rolled
@@ -100,9 +105,14 @@ export async function watchOnce(opts: WatchOptions, log: Logger): Promise<WatchV
   if (ui.kind === 'ok') {
     // Healthy: record success (clears counters + snapshots last-good via the
     // CLI's existing recordSuccess so a foreign boot is also captured).
+    // Guard plan A: only bless last-good when the running DSH actually booted
+    // with the on-disk config being snapshotted (a bundle edit pending a
+    // restart must never be marked good — this is the exact pollution bug that
+    // recorded dsh-broken-theme as good in the wild).
     recordSuccess(opts.home, opts.profile, logCtx,
       join(profileDir(opts.home, opts.profile), 'package.json'),
-      join(profileDir(opts.home, opts.profile), 'cordis.patch.yml'))
+      join(profileDir(opts.home, opts.profile), 'cordis.patch.yml'),
+      () => liveBootMatches(opts.home, opts.profile))
     // Non-red-screen degradation advisory: enabled plugins in a failed fiber.
     const degraded = detectFailedFibers(opts.home)
     if (degraded.length) {

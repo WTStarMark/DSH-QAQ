@@ -20,14 +20,15 @@ describe('parseVersion / compareVersions', () => {
     expect(parseVersion('1.2')).toBeNull()
   })
 
-  it('orders the QAQ release chain (0.x.3 → 0.4.4)', () => {
+  it('orders the QAQ release chain (0.x.3 → 0.4.5)', () => {
     expect(compareVersions('0.0.3', '0.1.3')).toBe(-1)
     expect(compareVersions('0.1.3', '0.2.3')).toBe(-1)
     expect(compareVersions('0.2.3', '0.3.3')).toBe(-1)
     expect(compareVersions('0.3.3', '0.4.3')).toBe(-1)
     expect(compareVersions('0.4.3', '0.4.4')).toBe(-1)
-    expect(compareVersions('0.4.4', '0.4.4')).toBe(0)
-    expect(compareVersions('0.5.0', '0.4.4')).toBe(1)
+    expect(compareVersions('0.4.4', '0.4.5')).toBe(-1)
+    expect(compareVersions('0.4.5', '0.4.5')).toBe(0)
+    expect(compareVersions('0.5.0', '0.4.5')).toBe(1)
   })
 
   it('treats unparsable versions as 0.0.0', () => {
@@ -37,10 +38,10 @@ describe('parseVersion / compareVersions', () => {
 })
 
 describe('resolveLocalVersion', () => {
-  it('reads the repo package.json next to the bundle (0.4.4 after alignment)', () => {
+  it('reads the repo package.json next to the bundle (0.4.5 after alignment)', () => {
     const v = resolveLocalVersion()
     expect(parseVersion(v)).not.toBeNull()
-    expect(compareVersions(v, '0.4.4')).toBe(0)
+    expect(compareVersions(v, '0.4.5')).toBe(0)
   })
 })
 
@@ -56,8 +57,8 @@ describe('checkForUpdate (Beta)', () => {
   })
 
   it('reports up-to-date when the remote is equal or older', async () => {
+    expect((await checkForUpdate({ fetchImpl: okFetch('0.4.5') })).updateAvailable).toBe(false)
     expect((await checkForUpdate({ fetchImpl: okFetch('0.4.4') })).updateAvailable).toBe(false)
-    expect((await checkForUpdate({ fetchImpl: okFetch('0.4.3') })).updateAvailable).toBe(false)
   })
 
   it('fails cleanly on an HTTP error', async () => {

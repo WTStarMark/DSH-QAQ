@@ -19,7 +19,7 @@ import { superviseBoot, type GuardOptions } from './guard.ts'
 import { openConsole } from './console.ts'
 import { installPlugin } from './install-plugin.ts'
 import { preflight } from './env.ts'
-import { manualBackup, manualRestore, isUsable } from './rollback.ts'
+import { manualBackup, manualRestore, isUsable, MAX_ESCALATION_STEPS } from './rollback.ts'
 import { watchOnce } from './watch.ts'
 import { makeT, resolveLang, type Lang } from './i18n.ts'
 import { runSetup } from './setup.ts'
@@ -224,17 +224,33 @@ async function cmdDsh(args: CliArgs): Promise<void> {
       return
     }
 
-    // Failed: if a rollback was applied, restart once and monitor the restart.
+    // Failed: if a rollback was applied, restart and monitor. If the restart
+    // STILL fails but the rollback escalated (plan B: walked back to an older
+    // snapshot because the restored last-good was itself toxic), keep restarting
+    // — each step moves to a strictly older snapshot, bounded by
+    // MAX_ESCALATION_STEPS. A failure with rolledBack=false (no older snapshot,
+    // fence respected, or env failure) stops the loop to avoid a rollback loop.
     if (verdict.rolledBack) {
-      log.warn('rollback applied; restarting dsh web once…')
-      const second = await superviseBoot({ ...guardOpts, autoConfirm: true })
-      if (second.ok) {
-        log.info('post-rollback restart healthy at ' + second.url + '. Guard monitoring.')
-        await second.supervisor.exit
-        return
+      log.warn('rollback applied; restarting dsh web …')
+      let steps = 0
+      for (;;) {
+        const next = await superviseBoot({ ...guardOpts, autoConfirm: true })
+        if (next.ok) {
+          log.info('post-rollback restart healthy at ' + next.url + '. Guard monitoring.')
+          await next.supervisor.exit
+          return
+        }
+        if (!next.rolledBack) {
+          log.error('post-rollback restart still failing (kind=' + next.failureKind + '); no further escalation available. Stopping to avoid a rollback loop. Inspect ' + join(qaqDir(home), 'rolled-back') + ' and fix config.')
+          return
+        }
+        steps++
+        if (steps >= MAX_ESCALATION_STEPS) {
+          log.error('post-rollback escalation stopped after ' + steps + ' failing restarts. Inspect ' + join(qaqDir(home), 'rolled-back') + ' and fix config.')
+          return
+        }
+        log.warn('post-rollback restart still failing (kind=' + next.failureKind + '); escalating to an older snapshot (step ' + steps + ' of ' + MAX_ESCALATION_STEPS + ')…')
       }
-      log.error('post-rollback restart still failing (kind=' + second.failureKind + '). Stopping to avoid a rollback loop. Inspect ' + join(qaqDir(home), 'rolled-back') + ' and fix config.')
-      return
     }
 
     // Failed: the user declined the rollback at the confirmation prompt. Do not

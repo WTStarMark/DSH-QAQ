@@ -49,6 +49,10 @@ const AUTO_KEEP = 10
 const AUTO_DIR = 'history/auto'
 const FILES = ['package.json', 'cordis.patch.yml'] as const
 const CHANNEL_VERSION = 1
+/** The boot-time config fingerprint of THIS process (guard plan A). Captured in
+ * apply() and kept stable; reported in plugin-state.json so the external QAQ
+ * guard can refuse to bless an on-disk config this process never booted with. */
+let bootFingerprint = ''
 /** How often the plugin refreshes the presence heartbeat while DSH is up.
  * Kept well under the CLI guard's 15s freshness window (see shared-io.ts
  * readPluginHeartbeat maxAgeMs) so a running DSH is always discoverable by
@@ -61,6 +65,39 @@ const HEARTBEAT_INTERVAL_MS = (() => {
 })()
 
 function newTimestamp(): string { return new Date().toISOString().replace(/[:.]/g, '-') }
+
+/* ==== boot-config fingerprint (guard plan A, inline exact copy of
+ * src/verify-config.ts so both sides agree; zero dependencies). Computed ONCE
+ * at apply() from the profile config this process is ABOUT to boot with, then
+ * carried verbatim into plugin-state.json — never recomputed from disk on the
+ * heartbeat timer, so a post-boot edit to the profile is NOT mistaken for
+ * "what this process loaded". ==== */
+function canonicalConfigStr(dir: string): string {
+  let bundles = ''
+  let patch = ''
+  try {
+    const pj = dir + '/package.json'
+    const pkg = JSON.parse(readFileSync(pj, 'utf8'))
+    const b = pkg?.dsh?.profile?.bundles
+    if (Array.isArray(b)) bundles = JSON.stringify(b.map(String))
+  } catch { /* unreadable -> empty */ }
+  try {
+    const cp = dir + '/cordis.patch.yml'
+    patch = readFileSync(cp, 'utf8')
+  } catch { /* unreadable -> empty */ }
+  return bundles + '\u0001' + patch
+}
+function fnv1aHex(input: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(16).padStart(8, '0')
+}
+function pluginConfigFingerprint(dir: string): string {
+  return fnv1aHex(canonicalConfigStr(dir))
+}
 
 /** Best-effort atomic JSON write (temp + rename). Never throws. */
 function writeJsonQuiet(file: string, value: unknown): void {
@@ -183,6 +220,11 @@ export function apply(ctx: Context): void {
   const home = resolveDshHome()
   const profileName = process.env.QAQ_PROFILE ?? inferProfileName() ?? 'web'
   const profileDir = join(home, 'profiles', profileName)
+  // Guard plan A: capture the fingerprint of the config THIS process is booting
+  // with, ONCE, before any later profile edit can change the disk content. It is
+  // what "loaded" means for this boot; the CLI compares its current on-disk
+  // fingerprint against it before blessing last-good.
+  bootFingerprint = pluginConfigFingerprint(profileDir)
   const settle = (ctx.get as (k: string) => any)?.('loader')?.await?.()
 
   // Presence heartbeat NOW (DSH is booting / alive) so an external `qaq watch`
@@ -237,6 +279,9 @@ function writePluginState(home: string, profileName: string, ctx: Context, settl
       profileOk: existsSync(join(home, 'profiles', profileName, 'package.json')),
       // The bundle list snapshot at boot (mirrors the profile manifest).
       bundles: readBundles(home, profileName),
+      // Guard plan A: the config fingerprint THIS process booted with (captured
+      // once in apply()). The CLI refuses to bless a different on-disk config.
+      loadedFingerprint: bootFingerprint,
     })
   } catch { /* best effort */ }
 }

@@ -15,6 +15,7 @@ import { detectFailedFibers } from './degraded.ts'
 import { readState, writeState, profileState } from './store.ts'
 import { maybeRollback, recordSuccess } from './rollback.ts'
 import { resolveDshHome, profileDir } from './paths.ts'
+import { liveBootMatches } from './verify-config.ts'
 import { pushEvent } from './shared-io.ts'
 import { Logger } from './log.ts'
 import { join } from 'node:path'
@@ -179,7 +180,10 @@ export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
       // the first healthy probe is never recorded as last-good.
       const confirmed = await confirmStable(last.supervisor!, url, opts, log)
       if (confirmed.ok) {
-        recordSuccess(home, profile, log, join(profileDir(home, profile), 'package.json'), join(profileDir(home, profile), 'cordis.patch.yml'))
+        // Guard plan A: only bless last-good when the running DSH actually
+        // booted with the on-disk config being snapshotted (a bundle edit
+        // pending a restart must never be marked good).
+        recordSuccess(home, profile, log, join(profileDir(home, profile), 'package.json'), join(profileDir(home, profile), 'cordis.patch.yml'), () => liveBootMatches(home, profile))
         return { ok: true, supervisor: last.supervisor!, url }
       }
       // The boot did not stay healthy during the confirmation window — treat
@@ -216,7 +220,9 @@ export async function superviseBoot(opts: GuardOptions): Promise<BootVerdict> {
     // every boot, so roll back on the first hit instead of waiting out the
     // general same-kind threshold.
     const effectiveThreshold = lastOk.definitive ? 1 : opts.threshold
-    const rolled = await maybeRollback({ home, profile, kind, autoConfirm: opts.autoConfirm ?? false, log, threshold: effectiveThreshold })
+    // Plan B: allow the post-rollback restart (driven by cli.ts) to escalate to
+    // an OLDER snapshot if the restored last-good is itself still failing.
+    const rolled = await maybeRollback({ home, profile, kind, autoConfirm: opts.autoConfirm ?? false, log, threshold: effectiveThreshold, allowEscalation: true })
     return {
       ok: false, failureKind: kind, error: lastOk.error,
       rolledBack: rolled.restored, rollbackCancelled: rolled.cancelled,

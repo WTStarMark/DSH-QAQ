@@ -175,3 +175,20 @@ describe('dsh-qaq true backup (user-conversation gate)', () => {
     expect(manifestObj.profile).toBe('web')
   })
 })
+
+describe('dsh-qaq loaded-config fingerprint (guard plan A)', () => {
+  it('reports a loadedFingerprint equal to the CLI-side config fingerprint', async () => {
+    const { apply } = await import('../packages/dsh-qaq/src/index.ts')
+    const { PLUGIN_STATE_FILE } = await import('../src/shared-io.ts')
+    const { configFingerprint } = await import('../src/verify-config.ts')
+    // The profile package.json is seeded in beforeAll (bundles: dsh-base, dsh-qaq).
+    const cliFp = configFingerprint(join(home, 'profiles', 'web'))
+    apply(fakeCtx())
+    await new Promise((res) => setTimeout(res, 80))
+    const st = JSON.parse(readFileSync(join(home, '.qaq', 'shared', PLUGIN_STATE_FILE), 'utf8')) as { loadedFingerprint?: string }
+    expect(typeof st.loadedFingerprint).toBe('string')
+    // The two sides must compute the identical fingerprint (they share the
+    // algorithm; a drift here would make plan A refuse/allow wrongly).
+    expect(st.loadedFingerprint).toBe(cliFp)
+  })
+})

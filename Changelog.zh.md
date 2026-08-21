@@ -4,8 +4,21 @@ QAQ —— DeepSeek Harness 启动容灾守卫。本文件依据 git 提交历�
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/)——每个版本按 **新增 / 修复 / 变更 / 移除** 分组。
 
----
+## [0.4.5] — 2026-08-21 · 守卫双重保障：配置指纹门控与防循环步进回滚
 
+### 新增
+- **last-good 配置指纹门控**：`recordSuccess` 只把「运行中 DSH 实际加载的配置」与「被快照的磁盘配置」指纹一致的配置盖章为 last-good。dsh-qaq 插件在开机时一次性上报本进程实际加载的配置指纹（`plugin-state.json` 的 `loadedFingerprint`），杜绝「运行进程健康于旧配置、而磁盘上新配置（如新启用的 bundle 插件）从未被启动验证」的污染——这正是 dsh-broken-theme 被记为 last-good 的根因。指纹不匹配时拒绝盖章并推送 `config-not-verified` 事件。
+- **防死循环步进回滚**：回滚后若恢复的 last-good 本身就是故障源（恢复后仍红屏/崩溃），防死循环栅栏不再一刀切锁死；守卫按 `rollbackEscalation` 记录的回退偏移**步进回滚到更老的合法快照**（受限 `MAX_ESCALATION_STEPS` 步），直到找到可启动配置或已无更老快照才停手；无更老快照时仍维持栅栏停手。启动器 `cmdDsh`（回滚后重启循环）与侧载 `watch` 均已接入。
+
+### 变更
+- `store.ts` 的 `ProfileState` 新增 `rollbackEscalation`；`rollback.ts` 的 `maybeRollback` 支持 `allowEscalation` 与按偏移选择**有序合法快照列表**；`recordSuccess` 新增可选 `verifier` 门（guard/watch 两处调用点传入 `liveBootMatches`）。
+- 新增 `src/verify-config.ts`（CLI 侧配置指纹算法 + 三者判定）；`shared-io.ts` 的 `PluginState` 增加 `loadedFingerprint`。
+- 版本统一升至 `0.4.5`（`package.json` / `packages/dsh-qaq/package.json`）。
+
+### 测试
+- 新增 `verify-config.spec.ts`（指纹算法、`liveBootMatches` 三态、`recordSuccess` 门控拒绝/放行）与 `escalation.spec.ts`（步进回滚至更老快照、未选择时不破栅栏、无更老快照停手、成功清除回退状态）；`plugin.spec.ts` 增加插件↔CLI 指纹一致性用例。
+
+---
 ## [0.4.4] — 2026-08-18 · 版本更新检测（Beta）与版本对齐
 
 ### 新增

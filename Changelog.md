@@ -4,8 +4,21 @@ QAQ — DeepSeek Harness launch resilience guard. All notable changes are docume
 
 Format follows [Keep a Changelog](https://keepachangelog.com/) — each release is grouped into **Added / Fixed / Changed / Removed**.
 
----
+## [0.4.5] — 2026-08-21 · guard double safeguard: loaded-config fingerprint gate & anti-loop walk-back rollback
 
+### Added
+- **last-good config-fingerprint gate**: `recordSuccess` only blesses a config as last-good when the fingerprint of what the RUNNING DSH actually loaded equals the fingerprint of the on-disk config being snapshotted. The dsh-qaq plugin reports, once at boot, the fingerprint of the profile config it consumed (`loadedFingerprint` in plugin-state.json), closing the exact pollution bug that recorded `dsh-broken-theme` as last-good while the live process was still healthy on the OLD config. A mismatch refuses the blessing and pushes a `config-not-verified` event.
+- **anti-loop walk-back rollback**: when the restored last-good is itself the failure source (still red-screening after restore), the anti-loop fence no longer hard-blocks: the guard walks back to OLDER valid snapshots step by step (`rollbackEscalation` offset, capped by `MAX_ESCALATION_STEPS`) until a bootable config is found or no older snapshot exists (then the fence holds). Wired into both the launcher `cmdDsh` restart loop and the sideload `watch` path.
+
+### Changed
+- `ProfileState` gains `rollbackEscalation` (store.ts); `maybeRollback` supports `allowEscalation` and offset-based selection from an ordered VALID snapshot list; `recordSuccess` gains an optional verifier gate (both guard and watch call sites pass `liveBootMatches`).
+- New `src/verify-config.ts` (CLI-side fingerprint + three-way match); `PluginState` gains `loadedFingerprint` (shared-io.ts).
+- Versions aligned to `0.4.5` (`package.json` / `packages/dsh-qaq/package.json`).
+
+### Tests
+- Added `verify-config.spec.ts` (fingerprint algorithm, `liveBootMatches` three states, `recordSuccess` gate refuse/allow) and `escalation.spec.ts` (walk-back to older snapshot, fence intact without opt-in, stop with no older snapshot, success clears walk-back); `plugin.spec.ts` gains a plugin-CLI fingerprint parity case.
+
+---
 ## [0.4.4] — 2026-08-18 · version update check (Beta) & version alignment
 
 ### Added
